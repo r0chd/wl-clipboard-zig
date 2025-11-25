@@ -1,3 +1,4 @@
+const tmpfile = @import("tmpfile.zig");
 const wl = @import("wayland").client.wl;
 const ext = @import("wayland").client.ext;
 const std = @import("std");
@@ -20,7 +21,20 @@ pub const WlClipboard = struct {
         if (display.dispatch() != .SUCCESS) return error.DispatchFailed;
         if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
-        //const device = try wayland_context.data_control_manager.?.getDataDevice(wayland_context.seat.?);
+        const data_control_manager = wayland_context.data_control_manager.?;
+
+        const data_source = try data_control_manager.createDataSource();
+        //data_source.offer(_mime_type: [*:0]const u8)
+
+        const device = try data_control_manager.getDataDevice(wayland_context.seat.?);
+        device.setPrimarySelection(data_source);
+
+        var file = try tmpfile.tmpFile(.{});
+        defer file.deinit();
+
+        try file.f.writeAll("hello world");
+
+        std.debug.print("{s}\n", .{file.abs_path});
 
         return .{ .wayland_context = wayland_context };
     }
@@ -34,13 +48,13 @@ pub const WaylandContext = struct {
     const Self = @This();
 };
 
-const EventInterfaces = enum {
-    wl_compositor,
-    wl_seat,
-    ext_data_control_manager_v1,
-};
-
 fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, state: *WaylandContext) void {
+    const EventInterfaces = enum {
+        wl_compositor,
+        wl_seat,
+        ext_data_control_manager_v1,
+    };
+
     switch (event) {
         .global => |global| {
             const event_str = std.meta.stringToEnum(EventInterfaces, mem.span(global.interface)) orelse return;
@@ -62,9 +76,6 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, state: *Wa
                         wl.Seat.generated_version,
                     ) catch @panic("Failed to bind seat global");
                     state.seat = wl_seat;
-
-                    const data_control_device = state.data_control_manager.?.getDataDevice(state.seat.?) catch @panic("");
-                    _ = data_control_device;
                 },
             }
         },

@@ -31,69 +31,83 @@ const Arguments = enum {
     @"--type",
 };
 
-pub fn parseArgs(alloc: mem.Allocator) !void {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(alloc);
+const Cli = struct {
+    data: []u8,
 
-    var args = std.process.args();
-    var index: u8 = 0;
-    while (args.next()) |arg| : (index += 1) {
-        if (index == 0) continue;
+    const Self = @This();
 
-        if (meta.stringToEnum(Arguments, arg)) |argument| {
-            switch (argument) {
-                .@"--help", .@"-h" => {
-                    std.log.info("{s}\n", .{help_message});
-                    std.process.exit(0);
-                },
-                .@"--version", .@"-V" => {
-                    std.log.info("wl-copy v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
-                    std.process.exit(0);
-                },
-                .@"--verbose", .@"-v" => {
-                    @panic("TODO");
-                },
+    fn init(alloc: mem.Allocator) !Self {
+        var list: std.ArrayList(u8) = .empty;
+        defer list.deinit(alloc);
 
-                .@"--paste-once", .@"-o" => {
-                    @panic("TODO");
-                },
-                .@"--foreground", .@"-f" => {
-                    @panic("TODO");
-                },
-                .@"--clear", .@"-c" => {
-                    @panic("TODO");
-                },
-                .@"--primary", .@"-p" => {
-                    @panic("TODO");
-                },
-                .@"--trim-newline", .@"-n" => {
-                    @panic("TODO");
-                },
-                .@"--type", .@"-t" => {
-                    @panic("TODO");
-                },
-                .@"--seat", .@"-s" => {
-                    @panic("TODO");
-                },
-                .@"--regular", .@"-r" => {
-                    @panic("TODO");
-                },
+        var args = std.process.args();
+        var index: u8 = 0;
+        while (args.next()) |arg| : (index += 1) {
+            if (index == 0) continue;
+
+            if (meta.stringToEnum(Arguments, arg)) |argument| {
+                switch (argument) {
+                    .@"--help", .@"-h" => {
+                        std.log.info("{s}\n", .{help_message});
+                        std.process.exit(0);
+                    },
+                    .@"--version", .@"-V" => {
+                        std.log.info("wl-copy v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
+                        std.process.exit(0);
+                    },
+                    .@"--verbose", .@"-v" => {
+                        @panic("TODO");
+                    },
+
+                    .@"--paste-once", .@"-o" => {
+                        @panic("TODO");
+                    },
+                    .@"--foreground", .@"-f" => {
+                        @panic("TODO");
+                    },
+                    .@"--clear", .@"-c" => {
+                        @panic("TODO");
+                    },
+                    .@"--primary", .@"-p" => {
+                        @panic("TODO");
+                    },
+                    .@"--trim-newline", .@"-n" => {
+                        @panic("TODO");
+                    },
+                    .@"--type", .@"-t" => {
+                        @panic("TODO");
+                    },
+                    .@"--seat", .@"-s" => {
+                        @panic("TODO");
+                    },
+                    .@"--regular", .@"-r" => {
+                        @panic("TODO");
+                    },
+                }
+            } else {
+                try list.appendSlice(alloc, arg);
+                try list.append(alloc, 32);
             }
-        } else {
-            try list.appendSlice(alloc, arg);
-            try list.append(alloc, 32);
         }
+
+        if (list.items.len == 0) {
+            const stdin = std.fs.File.stdin();
+            var reader = stdin.reader(list.items);
+            const data = try reader.interface.allocRemaining(alloc, .unlimited);
+            defer alloc.free(data);
+
+            try list.appendSlice(alloc, data);
+        }
+
+        return Cli{
+            .data = try list.toOwnedSlice(alloc),
+        };
     }
 
-    if (list.items.len == 0) {
-        const stdin = std.fs.File.stdin();
-        var reader = stdin.reader(list.items);
-        const data = try reader.interface.allocRemaining(alloc, .unlimited);
-        defer alloc.free(data);
-
-        try list.appendSlice(alloc, data);
+    fn deinit(self: Self, alloc: std.mem.Allocator) void {
+        alloc.free(self.data);
     }
-}
+};
 
 const help_message =
     \\Usage: wl-copy [OPTIONS] [TEXT TO COPY]...  
@@ -159,8 +173,11 @@ pub fn main() !void {
     };
     const alloc = if (@TypeOf(dbg_gpa) != void) dbg_gpa.allocator() else std.heap.c_allocator;
 
+    const cli = try Cli.init(alloc);
+    defer cli.deinit(alloc);
+
     const wl_clipboard = try wlcb.WlClipboard.init();
     _ = wl_clipboard;
 
-    try parseArgs(alloc);
+    std.debug.print("{s}", .{cli.data});
 }
