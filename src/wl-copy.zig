@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const meta = std.meta;
 const builtin = @import("builtin");
 const helpers = @import("helpers");
 const wlcb = @import("wl_clipboard");
@@ -8,29 +9,89 @@ const Arguments = enum {
     @"--help",
     @"-h",
     @"--version",
+    @"-V",
+    @"--verbose",
     @"-v",
+
+    @"-o",
+    @"--paste-once",
+    @"-f",
+    @"--foreground",
+    @"-c",
+    @"--clear",
+    @"-p",
+    @"--primary",
+    @"-r",
+    @"--regular",
+    @"-n",
+    @"--trim-newline",
+    @"-s",
+    @"--seat",
+    @"-t",
+    @"--type",
 };
 
-pub fn parseArgs() void {
+pub fn parseArgs(alloc: mem.Allocator) !void {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(alloc);
+
     var args = std.process.args();
     var index: u8 = 0;
     while (args.next()) |arg| : (index += 1) {
         if (index == 0) continue;
 
-        const argument = std.meta.stringToEnum(Arguments, arg) orelse {
-            std.log.err("Argument {s} not found", .{arg});
-            std.process.exit(1);
-        };
-        switch (argument) {
-            .@"--help", .@"-h" => {
-                std.log.info("{s}\n", .{help_message});
-                std.process.exit(0);
-            },
-            .@"--version", .@"-v" => {
-                std.log.info("Seto v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
-                std.process.exit(0);
-            },
+        if (meta.stringToEnum(Arguments, arg)) |argument| {
+            switch (argument) {
+                .@"--help", .@"-h" => {
+                    std.log.info("{s}\n", .{help_message});
+                    std.process.exit(0);
+                },
+                .@"--version", .@"-V" => {
+                    std.log.info("wl-copy v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
+                    std.process.exit(0);
+                },
+                .@"--verbose", .@"-v" => {
+                    @panic("TODO");
+                },
+
+                .@"--paste-once", .@"-o" => {
+                    @panic("TODO");
+                },
+                .@"--foreground", .@"-f" => {
+                    @panic("TODO");
+                },
+                .@"--clear", .@"-c" => {
+                    @panic("TODO");
+                },
+                .@"--primary", .@"-p" => {
+                    @panic("TODO");
+                },
+                .@"--trim-newline", .@"-n" => {
+                    @panic("TODO");
+                },
+                .@"--type", .@"-t" => {
+                    @panic("TODO");
+                },
+                .@"--seat", .@"-s" => {
+                    @panic("TODO");
+                },
+                .@"--regular", .@"-r" => {
+                    @panic("TODO");
+                },
+            }
+        } else {
+            try list.appendSlice(alloc, arg);
+            try list.append(alloc, 32);
         }
+    }
+
+    if (list.items.len == 0) {
+        const stdin = std.fs.File.stdin();
+        var reader = stdin.reader(list.items);
+        const data = try reader.interface.allocRemaining(alloc, .unlimited);
+        defer alloc.free(data);
+
+        try list.appendSlice(alloc, data);
     }
 }
 
@@ -97,10 +158,9 @@ pub fn main() !void {
         _ = dbg_gpa.deinit();
     };
     const alloc = if (@TypeOf(dbg_gpa) != void) dbg_gpa.allocator() else std.heap.c_allocator;
-    _ = alloc;
 
     const wl_clipboard = try wlcb.WlClipboard.init();
     _ = wl_clipboard;
 
-    parseArgs();
+    try parseArgs(alloc);
 }

@@ -8,7 +8,20 @@ const Arguments = enum {
     @"--help",
     @"-h",
     @"--version",
+    @"-V",
+    @"--verbose",
     @"-v",
+
+    @"--no-newline",
+    @"-n",
+    @"--list-types",
+    @"-l",
+    @"--primary",
+    @"-p",
+    @"--seat",
+    @"-s",
+    @"--type",
+    @"-t",
 };
 
 pub fn parseArgs() void {
@@ -26,9 +39,28 @@ pub fn parseArgs() void {
                 std.log.info("{s}\n", .{help_message});
                 std.process.exit(0);
             },
-            .@"--version", .@"-v" => {
-                std.log.info("Seto v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
+            .@"--version", .@"-V" => {
+                std.log.info("wl-paste v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
                 std.process.exit(0);
+            },
+            .@"--verbose", .@"-v" => {
+                @panic("TODO");
+            },
+
+            .@"--no-newline", .@"-n" => {
+                @panic("TODO");
+            },
+            .@"--list-types", .@"-l" => {
+                @panic("TODO");
+            },
+            .@"--primary", .@"-p" => {
+                @panic("TODO");
+            },
+            .@"--seat", .@"-s" => {
+                @panic("TODO");
+            },
+            .@"--type", .@"-t" => {
+                @panic("TODO");
             },
         }
     }

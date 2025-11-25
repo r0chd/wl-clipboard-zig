@@ -20,6 +20,8 @@ pub const WlClipboard = struct {
         if (display.dispatch() != .SUCCESS) return error.DispatchFailed;
         if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
+        //const device = try wayland_context.data_control_manager.?.getDataDevice(wayland_context.seat.?);
+
         return .{ .wayland_context = wayland_context };
     }
 };
