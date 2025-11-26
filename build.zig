@@ -5,6 +5,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const mime = b.dependency("mime", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const scanner = Scanner.create(b, .{});
     const wayland = b.createModule(.{ .root_source_file = scanner.result });
     scanner.addSystemProtocol("staging/ext-data-control/ext-data-control-v1.xml");
@@ -18,6 +23,7 @@ pub fn build(b: *std.Build) void {
     });
 
     mod.addImport("wayland", wayland);
+    mod.addImport("mime", mime.module("mime"));
 
     const wl_copy = b.addExecutable(.{
         .name = "wl-copy",
@@ -48,6 +54,8 @@ pub fn build(b: *std.Build) void {
     wl_paste.linkLibC();
     wl_paste.linkSystemLibrary("wayland-client");
     b.installArtifact(wl_paste);
+
+    wl_paste.root_module.addImport("mime", mime.module("mime"));
 
     const copy_step = b.step("copy", "Run wl-copy binary");
     const copy_cmd = b.addRunArtifact(wl_copy);

@@ -1,4 +1,5 @@
 const std = @import("std");
+const tmpfile = @import("tmpfile.zig");
 const mem = std.mem;
 const meta = std.meta;
 const builtin = @import("builtin");
@@ -176,8 +177,6 @@ pub fn main() !void {
     const cli = try Cli.init(alloc);
     defer cli.deinit(alloc);
 
-    const wl_clipboard = try wlcb.WlClipboard.init();
-    _ = wl_clipboard;
-
-    std.debug.print("{s}", .{cli.data});
+    var wl_clipboard = try wlcb.WlClipboard.init();
+    defer wl_clipboard.deinit();
 }

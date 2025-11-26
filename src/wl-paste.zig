@@ -1,8 +1,29 @@
 const std = @import("std");
-const mem = std.mem;
 const builtin = @import("builtin");
 const helpers = @import("helpers");
 const wlcb = @import("wl_clipboard");
+const mime = @import("mime");
+const mem = std.mem;
+const meta = std.meta;
+const posix = std.posix;
+
+var verbose_enabled = false;
+
+pub const std_options: std.Options = .{
+    .logFn = logFn,
+    .log_level = .debug,
+};
+
+fn logFn(
+    comptime level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (level == .debug and !verbose_enabled) return;
+
+    std.log.defaultLog(level, scope, format, args);
+}
 
 const Arguments = enum {
     @"--help",
@@ -24,47 +45,78 @@ const Arguments = enum {
     @"-t",
 };
 
-pub fn parseArgs() void {
-    var args = std.process.args();
-    var index: u8 = 0;
-    while (args.next()) |arg| : (index += 1) {
-        if (index == 0) continue;
+const Cli = struct {
+    type: ?mime.Type = null,
+    seat: ?[:0]const u8 = null,
+    no_newline: bool = false,
+    verbose: bool = false,
+    list_types: bool = false,
+    primary: bool = false,
 
-        const argument = std.meta.stringToEnum(Arguments, arg) orelse {
-            std.log.err("Argument {s} not found", .{arg});
-            std.process.exit(1);
-        };
-        switch (argument) {
-            .@"--help", .@"-h" => {
-                std.log.info("{s}\n", .{help_message});
-                std.process.exit(0);
-            },
-            .@"--version", .@"-V" => {
-                std.log.info("wl-paste v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
-                std.process.exit(0);
-            },
-            .@"--verbose", .@"-v" => {
-                @panic("TODO");
-            },
+    const Self = @This();
 
-            .@"--no-newline", .@"-n" => {
-                @panic("TODO");
-            },
-            .@"--list-types", .@"-l" => {
-                @panic("TODO");
-            },
-            .@"--primary", .@"-p" => {
-                @panic("TODO");
-            },
-            .@"--seat", .@"-s" => {
-                @panic("TODO");
-            },
-            .@"--type", .@"-t" => {
-                @panic("TODO");
-            },
+    fn init() Self {
+        var self = Cli{};
+
+        var args = std.process.args();
+        var index: u8 = 0;
+        while (args.next()) |arg| : (index += 1) {
+            if (index == 0) continue;
+
+            const argument = std.meta.stringToEnum(Arguments, arg) orelse {
+                std.log.err("Argument {s} not found", .{arg});
+                std.process.exit(1);
+            };
+            switch (argument) {
+                .@"--help", .@"-h" => {
+                    std.log.info("{s}\n", .{help_message});
+                    std.process.exit(0);
+                },
+                .@"--version", .@"-V" => {
+                    std.log.info("wl-paste v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
+                    std.process.exit(0);
+                },
+                .@"--verbose", .@"-v" => {
+                    self.verbose = true;
+                },
+
+                .@"--no-newline", .@"-n" => {
+                    self.no_newline = true;
+                },
+                .@"--list-types", .@"-l" => {
+                    self.list_types = true;
+                },
+                .@"--primary", .@"-p" => {
+                    self.primary = true;
+                },
+                .@"--seat", .@"-s" => {
+                    if (args.next()) |flag_arg| {
+                        self.seat = flag_arg;
+                    } else {
+                        std.log.err("option requires an argument -- 'seat'\n", .{});
+                        std.log.info("{s}\n", .{help_message});
+                        std.process.exit(0);
+                    }
+                },
+                .@"--type", .@"-t" => {
+                    if (args.next()) |flag_arg| {
+                        const mime_type = std.meta.stringToEnum(mime.Type, flag_arg) orelse {
+                            std.log.err("Unkown mime-type: {s}\n", .{flag_arg});
+                            std.process.exit(0);
+                        };
+                        self.type = mime_type;
+                    } else {
+                        std.log.err("option requires an argument -- 'type'\n", .{});
+                        std.log.info("{s}\n", .{help_message});
+                        std.process.exit(0);
+                    }
+                },
+            }
         }
+
+        return self;
     }
-}
+};
 
 const help_message =
     \\Usage: wl-paste [OPTIONS]  
@@ -112,10 +164,33 @@ pub fn main() !void {
         _ = dbg_gpa.deinit();
     };
     const alloc = if (@TypeOf(dbg_gpa) != void) dbg_gpa.allocator() else std.heap.c_allocator;
-    _ = alloc;
 
-    const wl_clipboard = try wlcb.WlClipboard.init();
-    _ = wl_clipboard;
+    var stdout_buffer: [0x100]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
-    parseArgs();
+    const cli = Cli.init();
+    verbose_enabled = cli.verbose;
+
+    var wl_clipboard = try wlcb.WlClipboard.init();
+    defer wl_clipboard.deinit();
+
+    if (cli.type) |mime_type| {
+        wl_clipboard.mimeType(mime_type);
+    }
+
+    const clipboard_content = try wl_clipboard.paste(alloc);
+    defer clipboard_content.deinit();
+
+    if (cli.list_types) {
+        for (clipboard_content.mime_types) |mime_type| {
+            try stdout.print("{s}\n", .{mime_type});
+        }
+
+        try stdout.flush();
+        return;
+    }
+
+    try stdout.writeAll(clipboard_content.content);
+    try stdout.flush();
 }

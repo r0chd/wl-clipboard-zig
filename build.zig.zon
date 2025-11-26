@@ -8,6 +8,10 @@
             .url = "git+https://codeberg.org/ifreund/zig-wayland.git#42a9edb1df8efd57cae0d05121ffa94d3df147c2",
             .hash = "wayland-0.5.0-dev-lQa1kpfXAQAcgPkLlX_6VLfrYm2j07h1xvxjKbDwy5jk",
         },
+        .mime = .{
+            .url = "https://github.com/andrewrk/mime/archive/refs/tags/4.0.0.tar.gz",
+            .hash = "mime-4.0.0-zwmL--0gAACndOVlROQeDnM0chfojNDS8tpohlsBqMNy",
+        },
     },
     .paths = .{
         "build.zig",

@@ -14,7 +14,6 @@
   };
   outputs =
     {
-      self,
       nixpkgs,
       zig,
       zls,
@@ -43,6 +42,7 @@
               clang-tools
               nixd
               nixfmt-rfc-style
+              valgrind
               ;
           };
         };
