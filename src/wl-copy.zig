@@ -177,6 +177,6 @@ pub fn main() !void {
     const cli = try Cli.init(alloc);
     defer cli.deinit(alloc);
 
-    var wl_clipboard = try wlcb.WlClipboard.init();
+    var wl_clipboard = try wlcb.WlClipboard.init(null);
     defer wl_clipboard.deinit();
 }

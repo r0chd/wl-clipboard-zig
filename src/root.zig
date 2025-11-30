@@ -24,6 +24,7 @@ const PasteContext = struct {
     offer: ?*ext.DataControlOfferV1 = null,
     mime_types: std.ArrayList([:0]const u8) = .empty,
     alloc: ?mem.Allocator = null,
+    primary: bool = false,
 };
 
 pub const WlClipboard = struct {
@@ -34,15 +35,21 @@ pub const WlClipboard = struct {
     device: *ext.DataControlDeviceV1,
     paste_context: PasteContext,
     mime_type: ?[:0]const u8 = null,
+    seat: ?[:0]const u8 = null,
 
     const Self = @This();
 
-    pub fn init() !Self {
+    pub fn init(seat: ?[:0]const u8) !Self {
         const display = try wl.Display.connect(null);
         const registry = try display.getRegistry();
 
-        var wayland_context = WaylandContext{};
+        var wayland_context = WaylandContext{
+            .seat_name = seat,
+        };
         registry.setListener(*WaylandContext, registryListener, &wayland_context);
+        // Ensure registry state is synced
+        if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        // Ensure seat state is synced
         if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
         const data_control_manager = wayland_context.data_control_manager.?;
@@ -97,8 +104,12 @@ pub const WlClipboard = struct {
         };
     }
 
-    pub fn mimeType(self: *Self, mime_type: [:0]const u8) !void {
+    pub fn setMimeType(self: *Self, mime_type: [:0]const u8) void {
         self.mime_type = mime_type;
+    }
+
+    pub fn setPrimary(self: *Self) void {
+        self.paste_context.primary = true;
     }
 
     pub fn deinit(self: *Self) void {
@@ -112,14 +123,17 @@ fn deviceListener(data_control_device: *ext.DataControlDeviceV1, event: ext.Data
 
     switch (event) {
         .data_offer => |offer| {
-            state.offer = offer.id;
             offer.id.setListener(*PasteContext, dataControlOfferListener, state);
         },
         .primary_selection => |offer| {
-            state.offer = offer.id;
+            if (state.primary) {
+                state.offer = offer.id;
+            }
         },
         .selection => |offer| {
-            state.offer = offer.id;
+            if (!state.primary) {
+                state.offer = offer.id;
+            }
         },
         .finished => {},
     }
@@ -140,6 +154,7 @@ fn dataControlOfferListener(data_control_offer: *ext.DataControlOfferV1, event: 
 }
 
 pub const WaylandContext = struct {
+    seat_name: ?[:0]const u8,
     compositor: ?*wl.Compositor = null,
     seat: ?*wl.Seat = null,
     data_control_manager: ?*ext.DataControlManagerV1 = null,
@@ -174,10 +189,24 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, state: *Wa
                         wl.Seat,
                         wl.Seat.generated_version,
                     ) catch @panic("Failed to bind seat global");
-                    state.seat = wl_seat;
+                    wl_seat.setListener(*WaylandContext, seatListener, state);
                 },
             }
         },
         .global_remove => |_| {},
+    }
+}
+
+fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, state: *WaylandContext) void {
+    switch (event) {
+        .capabilities => {},
+        .name => |name| {
+            if (state.seat_name) |seat_name| {
+                if (mem.eql(u8, seat_name, mem.span(name.name)))
+                    state.seat = seat;
+            } else {
+                state.seat = seat;
+            }
+        },
     }
 }
