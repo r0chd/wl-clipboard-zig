@@ -22,8 +22,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    mod.addImport("wayland", wayland);
     mod.addImport("mime", mime.module("mime"));
+    mod.addImport("wayland", wayland);
 
     const wl_copy = b.addExecutable(.{
         .name = "wl-copy",
@@ -54,8 +54,6 @@ pub fn build(b: *std.Build) void {
     wl_paste.linkLibC();
     wl_paste.linkSystemLibrary("wayland-client");
     b.installArtifact(wl_paste);
-
-    wl_paste.root_module.addImport("mime", mime.module("mime"));
 
     const copy_step = b.step("copy", "Run wl-copy binary");
     const copy_cmd = b.addRunArtifact(wl_copy);

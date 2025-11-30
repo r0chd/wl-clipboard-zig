@@ -1,9 +1,12 @@
+const std = @import("std");
 const wl = @import("wayland").client.wl;
 const ext = @import("wayland").client.ext;
-const std = @import("std");
+const mime = @import("mime");
 const mem = std.mem;
 const heap = std.heap;
-const mime = @import("mime");
+const ascii = std.ascii;
+const meta = std.meta;
+const MimeType = @import("MimeType.zig");
 
 pub const ClipboardContent = struct {
     content: []u8,
@@ -30,7 +33,7 @@ pub const WlClipboard = struct {
     data_source: ?*ext.DataControlSourceV1 = null,
     device: *ext.DataControlDeviceV1,
     paste_context: PasteContext,
-    mime_type: ?mime.Type = null,
+    mime_type: ?[:0]const u8 = null,
 
     const Self = @This();
 
@@ -65,8 +68,11 @@ pub const WlClipboard = struct {
 
         const offer = self.paste_context.offer orelse return error.NoClipboardContent;
 
+        var mime_type = MimeType.init(self.paste_context.mime_types.items);
+        const infered_mime_type = mime_type.infer(self.mime_type);
+
         const pipefd = try std.posix.pipe();
-        offer.receive("text/plain;charset=utf-8", pipefd[1]);
+        offer.receive(infered_mime_type, pipefd[1]);
         std.posix.close(pipefd[1]);
 
         if (self.display.flush() != .SUCCESS) return error.FlushFailed;
@@ -91,7 +97,7 @@ pub const WlClipboard = struct {
         };
     }
 
-    pub fn mimeType(self: *Self, mime_type: mime.Type) void {
+    pub fn mimeType(self: *Self, mime_type: [:0]const u8) !void {
         self.mime_type = mime_type;
     }
 
@@ -126,8 +132,9 @@ fn dataControlOfferListener(data_control_offer: *ext.DataControlOfferV1, event: 
 
     switch (event) {
         .offer => |offer| {
-            const mime_type = mem.span(offer.mime_type);
-            state.mime_types.append(state.alloc.?, mime_type) catch @panic("OOM");
+            const mime_type_slice = mem.span(offer.mime_type);
+            const mime_type_copy = state.alloc.?.dupeZ(u8, mime_type_slice) catch @panic("OOM");
+            state.mime_types.append(state.alloc.?, mime_type_copy) catch @panic("OOM");
         },
     }
 }

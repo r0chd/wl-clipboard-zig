@@ -46,7 +46,7 @@ const Arguments = enum {
 };
 
 const Cli = struct {
-    type: ?mime.Type = null,
+    type: ?[:0]const u8 = null,
     seat: ?[:0]const u8 = null,
     no_newline: bool = false,
     verbose: bool = false,
@@ -100,11 +100,7 @@ const Cli = struct {
                 },
                 .@"--type", .@"-t" => {
                     if (args.next()) |flag_arg| {
-                        const mime_type = std.meta.stringToEnum(mime.Type, flag_arg) orelse {
-                            std.log.err("Unkown mime-type: {s}\n", .{flag_arg});
-                            std.process.exit(0);
-                        };
-                        self.type = mime_type;
+                        self.type = flag_arg;
                     } else {
                         std.log.err("option requires an argument -- 'type'\n", .{});
                         std.log.info("{s}\n", .{help_message});
@@ -176,7 +172,7 @@ pub fn main() !void {
     defer wl_clipboard.deinit();
 
     if (cli.type) |mime_type| {
-        wl_clipboard.mimeType(mime_type);
+        try wl_clipboard.mimeType(mime_type);
     }
 
     const clipboard_content = try wl_clipboard.paste(alloc);
