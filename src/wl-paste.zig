@@ -168,18 +168,10 @@ pub fn main() !void {
     const cli = Cli.init();
     verbose_enabled = cli.verbose;
 
-    var wl_clipboard = try wlcb.WlClipboard.init(null);
+    var wl_clipboard = try wlcb.WlClipboard.init(.{});
     defer wl_clipboard.deinit();
 
-    if (cli.primary) {
-        wl_clipboard.setPrimary();
-    }
-
-    if (cli.type) |mime_type| {
-        wl_clipboard.setMimeType(mime_type);
-    }
-
-    const clipboard_content = try wl_clipboard.paste(alloc);
+    const clipboard_content = try wl_clipboard.paste(alloc, .{ .mime_type = cli.type, .primary = cli.primary });
     defer clipboard_content.deinit();
 
     if (cli.list_types) {
@@ -192,5 +184,8 @@ pub fn main() !void {
     }
 
     try stdout.writeAll(clipboard_content.content);
+    if (!cli.no_newline) {
+        try stdout.writeAll("\n");
+    }
     try stdout.flush();
 }

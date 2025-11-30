@@ -23,8 +23,16 @@ pub const ClipboardContent = struct {
 const PasteContext = struct {
     offer: ?*ext.DataControlOfferV1 = null,
     mime_types: std.ArrayList([:0]const u8) = .empty,
-    alloc: ?mem.Allocator = null,
-    primary: bool = false,
+    alloc: mem.Allocator,
+    primary: bool,
+
+    const Self = @This();
+
+    fn deinit(self: *Self) void {
+        if (self.offer) |offer| {
+            offer.destroy();
+        }
+    }
 };
 
 pub const WlClipboard = struct {
@@ -33,18 +41,16 @@ pub const WlClipboard = struct {
     wayland_context: WaylandContext,
     data_source: ?*ext.DataControlSourceV1 = null,
     device: *ext.DataControlDeviceV1,
-    paste_context: PasteContext,
-    mime_type: ?[:0]const u8 = null,
-    seat: ?[:0]const u8 = null,
+    seat: ?*[:0]const u8 = null,
 
     const Self = @This();
 
-    pub fn init(seat: ?[:0]const u8) !Self {
+    pub fn init(options: struct { seat_name: ?[:0]const u8 = null }) !Self {
         const display = try wl.Display.connect(null);
         const registry = try display.getRegistry();
 
         var wayland_context = WaylandContext{
-            .seat_name = seat,
+            .seat_name = options.seat_name,
         };
         registry.setListener(*WaylandContext, registryListener, &wayland_context);
         // Ensure registry state is synced
@@ -56,7 +62,6 @@ pub const WlClipboard = struct {
         const device = try data_control_manager.getDataDevice(wayland_context.seat.?);
 
         return .{
-            .paste_context = .{},
             .wayland_context = wayland_context,
             .registry = registry,
             .display = display,
@@ -64,19 +69,45 @@ pub const WlClipboard = struct {
         };
     }
 
-    pub fn paste(self: *Self, alloc: mem.Allocator) !ClipboardContent {
+    pub fn deinit(self: *Self) void {
+        if (self.data_source) |source| {
+            source.destroy();
+        }
+        self.device.destroy();
+        self.wayland_context.deinit();
+        self.registry.destroy();
+        self.display.disconnect();
+    }
+
+    pub fn copy(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn paste(
+        self: *Self,
+        alloc: mem.Allocator,
+        options: struct {
+            primary: bool = false,
+            mime_type: ?[:0]const u8 = null,
+        },
+    ) !ClipboardContent {
         var arena = std.heap.ArenaAllocator.init(alloc);
         const arena_alloc = arena.allocator();
 
-        self.paste_context.alloc = arena_alloc;
-        self.device.setListener(*PasteContext, deviceListener, &self.paste_context);
+        var paste_context = PasteContext{
+            .alloc = arena_alloc,
+            .primary = options.primary,
+        };
+        defer paste_context.deinit();
+
+        self.device.setListener(*PasteContext, deviceListener, &paste_context);
 
         if (self.display.dispatch() != .SUCCESS) return error.DispatchFailed;
 
-        const offer = self.paste_context.offer orelse return error.NoClipboardContent;
+        const offer = paste_context.offer orelse return error.NoClipboardContent;
 
-        var mime_type = MimeType.init(self.paste_context.mime_types.items);
-        const infered_mime_type = mime_type.infer(self.mime_type);
+        var mime_type = MimeType.init(paste_context.mime_types.items);
+        const infered_mime_type = mime_type.infer(options.mime_type);
 
         const pipefd = try std.posix.pipe();
         offer.receive(infered_mime_type, pipefd[1]);
@@ -99,22 +130,9 @@ pub const WlClipboard = struct {
 
         return .{
             .content = try buffer.toOwnedSlice(arena_alloc),
-            .mime_types = try self.paste_context.mime_types.toOwnedSlice(arena_alloc),
+            .mime_types = try paste_context.mime_types.toOwnedSlice(arena_alloc),
             .arena = arena,
         };
-    }
-
-    pub fn setMimeType(self: *Self, mime_type: [:0]const u8) void {
-        self.mime_type = mime_type;
-    }
-
-    pub fn setPrimary(self: *Self) void {
-        self.paste_context.primary = true;
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.registry.destroy();
-        self.display.disconnect();
     }
 };
 
@@ -142,13 +160,11 @@ fn deviceListener(data_control_device: *ext.DataControlDeviceV1, event: ext.Data
 fn dataControlOfferListener(data_control_offer: *ext.DataControlOfferV1, event: ext.DataControlOfferV1.Event, state: *PasteContext) void {
     _ = data_control_offer;
 
-    std.debug.assert(state.alloc != null);
-
     switch (event) {
         .offer => |offer| {
             const mime_type_slice = mem.span(offer.mime_type);
-            const mime_type_copy = state.alloc.?.dupeZ(u8, mime_type_slice) catch @panic("OOM");
-            state.mime_types.append(state.alloc.?, mime_type_copy) catch @panic("OOM");
+            const mime_type_copy = state.alloc.dupeZ(u8, mime_type_slice) catch return;
+            state.mime_types.append(state.alloc, mime_type_copy) catch return;
         },
     }
 }
@@ -160,6 +176,18 @@ pub const WaylandContext = struct {
     data_control_manager: ?*ext.DataControlManagerV1 = null,
 
     const Self = @This();
+
+    fn deinit(self: *Self) void {
+        if (self.compositor) |compositor| {
+            compositor.destroy();
+        }
+        if (self.seat) |seat| {
+            seat.destroy();
+        }
+        if (self.data_control_manager) |data_control_manager| {
+            data_control_manager.destroy();
+        }
+    }
 };
 
 fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, state: *WaylandContext) void {
