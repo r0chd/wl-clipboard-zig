@@ -1,10 +1,30 @@
 const std = @import("std");
-const tmpfile = @import("tmpfile.zig");
-const mem = std.mem;
-const meta = std.meta;
 const builtin = @import("builtin");
 const helpers = @import("helpers");
 const wlcb = @import("wl_clipboard");
+const mem = std.mem;
+const meta = std.meta;
+const fs = std.fs;
+const posix = std.posix;
+const os = std.os;
+
+var verbose_enabled = false;
+
+pub const std_options: std.Options = .{
+    .logFn = logFn,
+    .log_level = .debug,
+};
+
+fn logFn(
+    comptime level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (level == .debug and !verbose_enabled) return;
+
+    std.log.defaultLog(level, scope, format, args);
+}
 
 const Arguments = enum {
     @"--help",
@@ -33,11 +53,22 @@ const Arguments = enum {
 };
 
 const Cli = struct {
-    data: []u8,
+    data: ?[]u8 = null,
+    verbose: bool = false,
+    paste_once: bool = false,
+    foreground: bool = false,
+    clear: bool = false,
+    primary: bool = false,
+    trim_newline: bool = false,
+    type: ?[:0]const u8 = null,
+    seat: ?[:0]const u8 = null,
+    regular: bool = false,
 
     const Self = @This();
 
     fn init(alloc: mem.Allocator) !Self {
+        var self = Cli{};
+
         var list: std.ArrayList(u8) = .empty;
         defer list.deinit(alloc);
 
@@ -57,32 +88,44 @@ const Cli = struct {
                         std.process.exit(0);
                     },
                     .@"--verbose", .@"-v" => {
-                        @panic("TODO");
+                        self.verbose = true;
                     },
 
                     .@"--paste-once", .@"-o" => {
-                        @panic("TODO");
+                        self.paste_once = true;
                     },
                     .@"--foreground", .@"-f" => {
-                        @panic("TODO");
+                        self.foreground = true;
                     },
                     .@"--clear", .@"-c" => {
-                        @panic("TODO");
+                        self.clear = true;
                     },
                     .@"--primary", .@"-p" => {
-                        @panic("TODO");
+                        self.primary = true;
                     },
                     .@"--trim-newline", .@"-n" => {
-                        @panic("TODO");
+                        self.trim_newline = true;
                     },
                     .@"--type", .@"-t" => {
-                        @panic("TODO");
+                        if (args.next()) |flag_arg| {
+                            self.type = flag_arg;
+                        } else {
+                            std.log.err("option requires an argument -- 'type'\n", .{});
+                            std.log.info("{s}\n", .{help_message});
+                            std.process.exit(0);
+                        }
                     },
                     .@"--seat", .@"-s" => {
-                        @panic("TODO");
+                        if (args.next()) |flag_arg| {
+                            self.seat = flag_arg;
+                        } else {
+                            std.log.err("option requires an argument -- 'seat'\n", .{});
+                            std.log.info("{s}\n", .{help_message});
+                            std.process.exit(0);
+                        }
                     },
                     .@"--regular", .@"-r" => {
-                        @panic("TODO");
+                        self.regular = true;
                     },
                 }
             } else {
@@ -91,22 +134,17 @@ const Cli = struct {
             }
         }
 
-        if (list.items.len == 0) {
-            const stdin = std.fs.File.stdin();
-            var reader = stdin.reader(list.items);
-            const data = try reader.interface.allocRemaining(alloc, .unlimited);
-            defer alloc.free(data);
-
-            try list.appendSlice(alloc, data);
+        if (list.items.len > 0) {
+            self.data = try list.toOwnedSlice(alloc);
         }
 
-        return Cli{
-            .data = try list.toOwnedSlice(alloc),
-        };
+        return self;
     }
 
     fn deinit(self: Self, alloc: std.mem.Allocator) void {
-        alloc.free(self.data);
+        if (self.data) |data| {
+            alloc.free(data);
+        }
     }
 };
 
@@ -175,10 +213,47 @@ pub fn main() !void {
     const alloc = if (@TypeOf(dbg_gpa) != void) dbg_gpa.allocator() else std.heap.c_allocator;
 
     const cli = try Cli.init(alloc);
+    verbose_enabled = cli.verbose;
     defer cli.deinit(alloc);
 
     var wl_clipboard = try wlcb.WlClipboard.init(.{});
     defer wl_clipboard.deinit();
 
-    wl_clipboard.copy();
+    const source = if (cli.data) |data|
+        wlcb.Source{ .bytes = data }
+    else
+        wlcb.Source{ .stdin = {} };
+    var close_channel = try wl_clipboard.copy(alloc, source);
+    defer close_channel.deinit();
+
+    if (!cli.foreground) {
+        if (fs.openFileAbsolute("/dev/null", .{ .mode = .read_write })) |dev_null| {
+            _ = os.linux.dup2(dev_null.handle, posix.STDIN_FILENO);
+            _ = os.linux.dup2(dev_null.handle, posix.STDOUT_FILENO);
+            dev_null.close();
+        } else |_| {
+            fs.File.stdout().close();
+            fs.File.stdin().close();
+        }
+
+        var root = try fs.openDirAbsolute("/", .{});
+        defer root.close();
+        try root.setAsCwd();
+
+        const sa = std.posix.Sigaction{
+            .handler = .{ .handler = std.posix.SIG.IGN },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+        posix.sigaction(posix.SIG.HUP, &sa, null);
+
+        const pid = try posix.fork();
+        if (pid < 0) {
+            std.log.err("fork\n", .{});
+        } else if (pid > 0) {
+            posix.exit(0);
+        }
+    }
+
+    close_channel.cancelAwait();
 }

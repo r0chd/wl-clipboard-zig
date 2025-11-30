@@ -1,12 +1,18 @@
-const std = @import("std");
 const wl = @import("wayland").client.wl;
 const ext = @import("wayland").client.ext;
+const std = @import("std");
 const mime = @import("mime");
+const tmp = @import("tmpfile.zig");
 const mem = std.mem;
 const heap = std.heap;
 const ascii = std.ascii;
 const meta = std.meta;
+const atomic = std.atomic;
+const posix = std.posix;
+const os = std.os;
+const fs = std.fs;
 const MimeType = @import("MimeType.zig");
+const Channel = @import("Channel.zig").Channel;
 
 pub const ClipboardContent = struct {
     content: []u8,
@@ -16,6 +22,33 @@ pub const ClipboardContent = struct {
     const Self = @This();
 
     pub fn deinit(self: *const Self) void {
+        self.arena.deinit();
+    }
+};
+
+const CopyContext = struct {
+    channel: *Channel(void),
+    stop: *atomic.Value(bool),
+    file: fs.File,
+};
+
+const CopySignal = struct {
+    channel: *Channel(void),
+    thread: std.Thread,
+    arena: heap.ArenaAllocator,
+
+    const Self = @This();
+
+    pub fn cancelAwait(self: *Self) void {
+        self.channel.receive();
+        self.thread.join();
+    }
+
+    pub fn cancelled(self: *Self) bool {
+        return self.channel.tryReceive() orelse false;
+    }
+
+    pub fn deinit(self: *Self) void {
         self.arena.deinit();
     }
 };
@@ -35,11 +68,16 @@ const PasteContext = struct {
     }
 };
 
+pub const Source = union(enum) {
+    stdin: void,
+    bytes: []u8,
+};
+
 pub const WlClipboard = struct {
     display: *wl.Display,
     registry: *wl.Registry,
     wayland_context: WaylandContext,
-    data_source: ?*ext.DataControlSourceV1 = null,
+    data_source: *ext.DataControlSourceV1,
     device: *ext.DataControlDeviceV1,
     seat: ?*[:0]const u8 = null,
 
@@ -59,10 +97,12 @@ pub const WlClipboard = struct {
         if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
         const data_control_manager = wayland_context.data_control_manager.?;
+        const data_source = try data_control_manager.createDataSource();
         const device = try data_control_manager.getDataDevice(wayland_context.seat.?);
 
         return .{
             .wayland_context = wayland_context,
+            .data_source = data_source,
             .registry = registry,
             .display = display,
             .device = device,
@@ -70,17 +110,71 @@ pub const WlClipboard = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.data_source) |source| {
-            source.destroy();
-        }
+        self.data_source.destroy();
         self.device.destroy();
         self.wayland_context.deinit();
         self.registry.destroy();
         self.display.disconnect();
     }
 
-    pub fn copy(self: *Self) void {
-        _ = self;
+    pub fn copy(
+        self: *Self,
+        alloc: mem.Allocator,
+        source: Source,
+    ) !CopySignal {
+        const tmpfile = try tmp.tmpFile(.{});
+
+        var output_buffer: [4096]u8 = undefined;
+        var output_writer = tmpfile.f.writer(&output_buffer);
+
+        switch (source) {
+            .stdin => {
+                var stdin = std.fs.File.stdin();
+                var reader = stdin.readerStreaming(&.{});
+
+                _ = try output_writer.interface.sendFileAll(&reader, .unlimited);
+            },
+            .bytes => |data| {
+                _ = try output_writer.interface.writeAll(data);
+            },
+        }
+
+        try output_writer.interface.flush();
+
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        const arena_alloc = arena.allocator();
+
+        const channel = try arena_alloc.create(Channel(void));
+        channel.* = Channel(void).init();
+
+        const stop = try arena_alloc.create(std.atomic.Value(bool));
+        stop.* = std.atomic.Value(bool).init(false);
+
+        const copy_context = try arena_alloc.create(CopyContext);
+        copy_context.* = CopyContext{
+            .channel = channel,
+            .stop = stop,
+            .file = tmpfile.f,
+        };
+
+        self.data_source.offer("text/plain;charset=utf-8");
+        self.data_source.offer("text/plain");
+        self.data_source.offer("TEXT");
+        self.data_source.offer("STRING");
+        self.data_source.offer("UTF8_STRING");
+
+        self.data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+        self.device.setSelection(self.data_source);
+
+        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+
+        const thread = try std.Thread.spawn(.{}, dispatchWayland, .{ self.display, stop });
+
+        return .{
+            .arena = arena,
+            .channel = channel,
+            .thread = thread,
+        };
     }
 
     pub fn paste(
@@ -109,9 +203,9 @@ pub const WlClipboard = struct {
         var mime_type = MimeType.init(paste_context.mime_types.items);
         const infered_mime_type = mime_type.infer(options.mime_type);
 
-        const pipefd = try std.posix.pipe();
+        const pipefd = try posix.pipe();
         offer.receive(infered_mime_type, pipefd[1]);
-        std.posix.close(pipefd[1]);
+        posix.close(pipefd[1]);
 
         if (self.display.flush() != .SUCCESS) return error.FlushFailed;
 
@@ -119,7 +213,7 @@ pub const WlClipboard = struct {
 
         var read_buf: [4096]u8 = undefined;
         while (true) {
-            const bytes_read = std.posix.read(pipefd[0], &read_buf) catch |err| switch (err) {
+            const bytes_read = posix.read(pipefd[0], &read_buf) catch |err| switch (err) {
                 error.WouldBlock => continue,
                 else => return err,
             };
@@ -135,6 +229,30 @@ pub const WlClipboard = struct {
         };
     }
 };
+
+fn dataControlSourceListener(data_control_source: *ext.DataControlSourceV1, event: ext.DataControlSourceV1.Event, state: *CopyContext) void {
+    _ = data_control_source;
+    switch (event) {
+        .send => |data| {
+            var buf: [4096]u8 = undefined;
+            _ = state.file.seekTo(0) catch return;
+            const bytes_read = posix.read(state.file.handle, &buf) catch |err| {
+                std.log.err("Failed to read from temp file: {}", .{err});
+                return;
+            };
+            _ = posix.write(data.fd, buf[0..bytes_read]) catch |err| {
+                std.log.err("Failed to write to pipe: {}", .{err});
+                return;
+            };
+
+            posix.close(data.fd);
+        },
+        .cancelled => {
+            state.channel.send({});
+            state.stop.store(true, .unordered);
+        },
+    }
+}
 
 fn deviceListener(data_control_device: *ext.DataControlDeviceV1, event: ext.DataControlDeviceV1.Event, state: *PasteContext) void {
     _ = data_control_device;
@@ -236,5 +354,11 @@ fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, state: *WaylandContext) vo
                 state.seat = seat;
             }
         },
+    }
+}
+
+fn dispatchWayland(display: *wl.Display, stop: *atomic.Value(bool)) void {
+    while (!stop.load(.unordered)) {
+        if (display.dispatch() != .SUCCESS) return;
     }
 }
