@@ -21,8 +21,11 @@ pub const ClipboardContent = struct {
 
     const Self = @This();
 
-    pub fn deinit(self: *const Self) void {
+    pub fn deinit(self: *Self) void {
         self.arena.deinit();
+        self.content = undefined;
+        self.mime_types = undefined;
+        self.arena = undefined;
     }
 };
 
@@ -30,18 +33,25 @@ const CopyContext = struct {
     channel: *Channel(void),
     stop: *atomic.Value(bool),
     file: fs.File,
+    display: *wl.Display,
 };
 
 const CopySignal = struct {
     channel: *Channel(void),
-    thread: std.Thread,
+    thread: ?std.Thread,
+    stop: *atomic.Value(bool),
     arena: heap.ArenaAllocator,
+    copy_context: *CopyContext,
+    tmpfile: tmp.TmpFile,
 
     const Self = @This();
 
+    pub fn startDispatch(self: *Self) !void {
+        self.thread = try std.Thread.spawn(.{}, dispatchWayland, .{ self.copy_context.display, self.stop });
+    }
+
     pub fn cancelAwait(self: *Self) void {
         self.channel.receive();
-        self.thread.join();
     }
 
     pub fn cancelled(self: *Self) bool {
@@ -49,7 +59,16 @@ const CopySignal = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        if (self.thread) |thread| {
+            thread.join();
+        }
         self.arena.deinit();
+        self.channel = undefined;
+        self.thread = undefined;
+        self.stop = undefined;
+        self.copy_context = undefined;
+        self.arena = undefined;
+        self.tmpfile.deinit();
     }
 };
 
@@ -64,7 +83,11 @@ const PasteContext = struct {
     fn deinit(self: *Self) void {
         if (self.offer) |offer| {
             offer.destroy();
+            self.offer = null;
         }
+        self.mime_types.clearRetainingCapacity();
+        self.primary = false;
+        self.alloc = undefined;
     }
 };
 
@@ -115,6 +138,11 @@ pub const WlClipboard = struct {
         self.wayland_context.deinit();
         self.registry.destroy();
         self.display.disconnect();
+        self.data_source = undefined;
+        self.device = undefined;
+        self.wayland_context = undefined;
+        self.registry = undefined;
+        self.display = undefined;
     }
 
     pub fn copy(
@@ -122,7 +150,7 @@ pub const WlClipboard = struct {
         alloc: mem.Allocator,
         source: Source,
     ) !CopySignal {
-        const tmpfile = try tmp.tmpFile(.{});
+        var tmpfile = try tmp.tmpFile(.{});
 
         var output_buffer: [4096]u8 = undefined;
         var output_writer = tmpfile.f.writer(&output_buffer);
@@ -155,6 +183,7 @@ pub const WlClipboard = struct {
             .channel = channel,
             .stop = stop,
             .file = tmpfile.f,
+            .display = self.display,
         };
 
         self.data_source.offer("text/plain;charset=utf-8");
@@ -168,13 +197,32 @@ pub const WlClipboard = struct {
 
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
-        const thread = try std.Thread.spawn(.{}, dispatchWayland, .{ self.display, stop });
-
         return .{
             .arena = arena,
             .channel = channel,
-            .thread = thread,
+            .thread = null,
+            .stop = stop,
+            .copy_context = copy_context,
+            .tmpfile = tmpfile,
         };
+    }
+
+    pub fn copyToContext(
+        self: *Self,
+        copy_context: *CopyContext,
+    ) !void {
+        copy_context.display = self.display;
+
+        self.data_source.offer("text/plain;charset=utf-8");
+        self.data_source.offer("text/plain");
+        self.data_source.offer("TEXT");
+        self.data_source.offer("STRING");
+        self.data_source.offer("UTF8_STRING");
+
+        self.data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+        self.device.setSelection(self.data_source);
+
+        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
     }
 
     pub fn paste(
@@ -201,7 +249,7 @@ pub const WlClipboard = struct {
         const offer = paste_context.offer orelse return error.NoClipboardContent;
 
         var mime_type = MimeType.init(paste_context.mime_types.items);
-        const infered_mime_type = mime_type.infer(options.mime_type);
+        const infered_mime_type = try mime_type.infer(options.mime_type);
 
         const pipefd = try posix.pipe();
         offer.receive(infered_mime_type, pipefd[1]);
@@ -287,7 +335,7 @@ fn dataControlOfferListener(data_control_offer: *ext.DataControlOfferV1, event: 
     }
 }
 
-pub const WaylandContext = struct {
+const WaylandContext = struct {
     seat_name: ?[:0]const u8,
     compositor: ?*wl.Compositor = null,
     seat: ?*wl.Seat = null,
@@ -298,13 +346,17 @@ pub const WaylandContext = struct {
     fn deinit(self: *Self) void {
         if (self.compositor) |compositor| {
             compositor.destroy();
+            self.compositor = null;
         }
         if (self.seat) |seat| {
             seat.destroy();
+            self.seat = null;
         }
         if (self.data_control_manager) |data_control_manager| {
             data_control_manager.destroy();
+            self.data_control_manager = null;
         }
+        self.seat_name = null;
     }
 };
 

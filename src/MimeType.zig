@@ -15,7 +15,7 @@ pub fn init(mime_types: [][:0]const u8) Self {
     };
 }
 
-pub fn infer(self: *Self, explicit_mime_type: ?[:0]const u8) [:0]const u8 {
+pub fn infer(self: *Self, explicit_mime_type: ?[:0]const u8) ![:0]const u8 {
     if (explicit_mime_type) |selected_mime_type| {
         if (mem.eql(u8, selected_mime_type, "text")) {
             if (sliceContains(self.available_mime_types, "text/plain;charset=utf-8")) {
@@ -48,7 +48,7 @@ pub fn infer(self: *Self, explicit_mime_type: ?[:0]const u8) [:0]const u8 {
         }
     } else {
         var buf: [std.fs.max_path_bytes]u8 = undefined;
-        const stdout_path = std.os.getFdPath(posix.STDOUT_FILENO, &buf) catch @panic("");
+        const stdout_path = try std.os.getFdPath(posix.STDOUT_FILENO, &buf);
         const mime_type = mime.extension_map.get(std.fs.path.extension(stdout_path));
         if (mime_type) |mime_type_inner| {
             if (sliceContains(self.available_mime_types, @tagName(mime_type_inner))) {

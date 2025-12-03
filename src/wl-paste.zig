@@ -171,7 +171,7 @@ pub fn main() !void {
     var wl_clipboard = try wlcb.WlClipboard.init(.{});
     defer wl_clipboard.deinit();
 
-    const clipboard_content = try wl_clipboard.paste(alloc, .{ .mime_type = cli.type, .primary = cli.primary });
+    var clipboard_content = try wl_clipboard.paste(alloc, .{ .mime_type = cli.type, .primary = cli.primary });
     defer clipboard_content.deinit();
 
     if (cli.list_types) {

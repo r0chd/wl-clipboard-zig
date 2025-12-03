@@ -23,7 +23,6 @@ pub fn Channel(comptime T: type) type {
         pub fn tryReceive(self: *Self) ?T {
             self.mutex.lock();
             defer self.mutex.unlock();
-            defer self.value = null;
 
             if (self.value == null) return null;
 
@@ -33,11 +32,9 @@ pub fn Channel(comptime T: type) type {
         pub fn receive(self: *Self) T {
             self.mutex.lock();
             defer self.mutex.unlock();
-            defer self.value = null;
 
             self.cond.wait(&self.mutex);
 
-            // If we received then it's safe to assume that value isnt null
             return self.value.?;
         }
     };
