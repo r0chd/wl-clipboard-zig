@@ -241,7 +241,7 @@ pub fn main() !void {
     defer wl_clipboard.deinit();
 
     var close_channel = try wl_clipboard.copy(alloc, source);
-    defer close_channel.deinit();
+    defer close_channel.deinit(alloc);
 
     if (!cli.foreground) {
         if (fs.openFileAbsolute("/dev/null", .{ .mode = .read_write })) |dev_null| {

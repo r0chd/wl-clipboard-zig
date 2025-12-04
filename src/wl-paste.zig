@@ -172,10 +172,10 @@ pub fn main() !void {
     defer wl_clipboard.deinit();
 
     var clipboard_content = try wl_clipboard.paste(alloc, .{ .mime_type = cli.type, .primary = cli.primary });
-    defer clipboard_content.deinit();
+    defer clipboard_content.deinit(alloc);
 
     if (cli.list_types) {
-        for (clipboard_content.mime_types) |mime_type| {
+        for (clipboard_content.mimeTypes()) |mime_type| {
             try stdout.print("{s}\n", .{mime_type});
         }
 
@@ -183,7 +183,17 @@ pub fn main() !void {
         return;
     }
 
-    try stdout.writeAll(clipboard_content.content);
+    var read_buf: [4096]u8 = undefined;
+    while (true) {
+        const bytes_read = posix.read(clipboard_content.pipe, &read_buf) catch |err| switch (err) {
+            error.WouldBlock => continue,
+            else => return err,
+        };
+
+        if (bytes_read == 0) break;
+        try stdout.writeAll(read_buf[0..bytes_read]);
+    }
+
     if (!cli.no_newline) {
         try stdout.writeAll("\n");
     }

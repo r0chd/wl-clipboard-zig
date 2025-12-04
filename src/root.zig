@@ -15,17 +15,21 @@ const MimeType = @import("MimeType.zig");
 const Channel = @import("Channel.zig").Channel;
 
 pub const ClipboardContent = struct {
-    content: []u8,
-    mime_types: [][:0]const u8,
-    arena: heap.ArenaAllocator,
+    pipe: i32,
+    mime_types: std.ArrayList([:0]const u8),
 
     const Self = @This();
 
-    pub fn deinit(self: *Self) void {
-        self.arena.deinit();
-        self.content = undefined;
+    pub fn mimeTypes(self: *Self) [][:0]const u8 {
+        return self.mime_types.items;
+    }
+
+    pub fn deinit(self: *Self, alloc: mem.Allocator) void {
+        for (self.mime_types.items) |mime_type| {
+            alloc.free(mime_type);
+        }
+        self.mime_types.deinit(alloc);
         self.mime_types = undefined;
-        self.arena = undefined;
     }
 };
 
@@ -40,13 +44,13 @@ const CopySignal = struct {
     channel: *Channel(void),
     thread: ?std.Thread,
     stop: *atomic.Value(bool),
-    arena: heap.ArenaAllocator,
     copy_context: *CopyContext,
     tmpfile: tmp.TmpFile,
 
     const Self = @This();
 
     pub fn startDispatch(self: *Self) !void {
+        if (self.copy_context.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
         self.thread = try std.Thread.spawn(.{}, dispatchWayland, .{ self.copy_context.display, self.stop });
     }
 
@@ -58,16 +62,23 @@ const CopySignal = struct {
         return self.channel.tryReceive() orelse false;
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *Self, alloc: mem.Allocator) void {
         if (self.thread) |thread| {
             thread.join();
+            //alloc.destroy(thread);
         }
-        self.arena.deinit();
+
+        alloc.destroy(self.channel);
         self.channel = undefined;
+
         self.thread = undefined;
+
+        alloc.destroy(self.stop);
         self.stop = undefined;
+
+        alloc.destroy(self.copy_context);
         self.copy_context = undefined;
-        self.arena = undefined;
+
         self.tmpfile.deinit();
     }
 };
@@ -93,7 +104,7 @@ const PasteContext = struct {
 
 pub const Source = union(enum) {
     stdin: void,
-    bytes: []u8,
+    bytes: []const u8,
 };
 
 pub const WlClipboard = struct {
@@ -169,16 +180,13 @@ pub const WlClipboard = struct {
 
         try output_writer.interface.flush();
 
-        var arena = std.heap.ArenaAllocator.init(alloc);
-        const arena_alloc = arena.allocator();
-
-        const channel = try arena_alloc.create(Channel(void));
+        const channel = try alloc.create(Channel(void));
         channel.* = Channel(void).init();
 
-        const stop = try arena_alloc.create(std.atomic.Value(bool));
+        const stop = try alloc.create(std.atomic.Value(bool));
         stop.* = std.atomic.Value(bool).init(false);
 
-        const copy_context = try arena_alloc.create(CopyContext);
+        const copy_context = try alloc.create(CopyContext);
         copy_context.* = CopyContext{
             .channel = channel,
             .stop = stop,
@@ -198,7 +206,6 @@ pub const WlClipboard = struct {
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
         return .{
-            .arena = arena,
             .channel = channel,
             .thread = null,
             .stop = stop,
@@ -233,18 +240,15 @@ pub const WlClipboard = struct {
             mime_type: ?[:0]const u8 = null,
         },
     ) !ClipboardContent {
-        var arena = std.heap.ArenaAllocator.init(alloc);
-        const arena_alloc = arena.allocator();
-
         var paste_context = PasteContext{
-            .alloc = arena_alloc,
+            .alloc = alloc,
             .primary = options.primary,
         };
         defer paste_context.deinit();
 
         self.device.setListener(*PasteContext, deviceListener, &paste_context);
 
-        if (self.display.dispatch() != .SUCCESS) return error.DispatchFailed;
+        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
         const offer = paste_context.offer orelse return error.NoClipboardContent;
 
@@ -253,27 +257,14 @@ pub const WlClipboard = struct {
 
         const pipefd = try posix.pipe();
         offer.receive(infered_mime_type, pipefd[1]);
-        posix.close(pipefd[1]);
 
         if (self.display.flush() != .SUCCESS) return error.FlushFailed;
 
-        var buffer: std.ArrayList(u8) = .empty;
-
-        var read_buf: [4096]u8 = undefined;
-        while (true) {
-            const bytes_read = posix.read(pipefd[0], &read_buf) catch |err| switch (err) {
-                error.WouldBlock => continue,
-                else => return err,
-            };
-
-            if (bytes_read == 0) break;
-            try buffer.appendSlice(arena_alloc, read_buf[0..bytes_read]);
-        }
+        posix.close(pipefd[1]);
 
         return .{
-            .content = try buffer.toOwnedSlice(arena_alloc),
-            .mime_types = try paste_context.mime_types.toOwnedSlice(arena_alloc),
-            .arena = arena,
+            .pipe = pipefd[0],
+            .mime_types = paste_context.mime_types,
         };
     }
 };
@@ -284,14 +275,20 @@ fn dataControlSourceListener(data_control_source: *ext.DataControlSourceV1, even
         .send => |data| {
             var buf: [4096]u8 = undefined;
             _ = state.file.seekTo(0) catch return;
-            const bytes_read = posix.read(state.file.handle, &buf) catch |err| {
-                std.log.err("Failed to read from temp file: {}", .{err});
-                return;
-            };
-            _ = posix.write(data.fd, buf[0..bytes_read]) catch |err| {
-                std.log.err("Failed to write to pipe: {}", .{err});
-                return;
-            };
+
+            while (true) {
+                const bytes_read = posix.read(state.file.handle, &buf) catch |err| {
+                    std.log.err("Failed to read from temp file: {}", .{err});
+                    break;
+                };
+
+                if (bytes_read == 0) break;
+
+                _ = posix.write(data.fd, buf[0..bytes_read]) catch |err| {
+                    std.log.err("Failed to write to pipe: {}", .{err});
+                    break;
+                };
+            }
 
             posix.close(data.fd);
         },
