@@ -79,7 +79,7 @@ const CopySignal = struct {
         alloc.destroy(self.copy_context);
         self.copy_context = undefined;
 
-        self.tmpfile.deinit();
+        self.tmpfile.deinit(alloc);
     }
 };
 
@@ -155,7 +155,12 @@ pub const WlClipboard = struct {
         alloc: mem.Allocator,
         source: Source,
     ) !CopySignal {
-        var tmpfile = try tmp.tmpFile(.{});
+        var tmpfile = try tmp.TmpFile.init(alloc, .{
+            .prefix = null,
+            .dir_prefix = null,
+            .flags = .{ .read = true, .mode = 0o400, .exclusive = true, .lock = .exclusive },
+            .dir_opts = .{},
+        });
 
         var output_buffer: [4096]u8 = undefined;
         var output_writer = tmpfile.f.writer(&output_buffer);
