@@ -14,6 +14,7 @@ const fs = std.fs;
 const MimeType = @import("MimeType.zig");
 const Channel = @import("Channel.zig").Channel;
 const GlobalList = @import("GlobalList.zig");
+const Seat = @import("Seat.zig");
 
 pub const ClipboardContent = struct {
     pipe: i32,
@@ -109,9 +110,8 @@ pub const Source = union(enum) {
 pub const WlClipboard = struct {
     globals: GlobalList,
     display: *wl.Display,
-    seat_name: ?[:0]const u8,
     compositor: *wl.Compositor,
-    seat: *wl.Seat,
+    seat: Seat,
     data_control_manager: *ext.DataControlManagerV1,
     data_source: *ext.DataControlSourceV1,
     device: *ext.DataControlDeviceV1,
@@ -123,16 +123,13 @@ pub const WlClipboard = struct {
         const globals = try GlobalList.init(display, alloc);
 
         const compositor = globals.bind(wl.Compositor, wl.Compositor.generated_version).?;
-        const seat = globals.bind(wl.Seat, wl.Seat.generated_version).?;
-
-        //seat.setListener(*struct { seat: *wl.Seat }, seatListener, .{ .seat = seat });
+        const seat = Seat.init(display, &globals, .{ .name = options.seat_name }) orelse return error.SeatNotFound;
 
         const data_control_manager = globals.bind(ext.DataControlManagerV1, ext.DataControlManagerV1.generated_version).?;
         const data_source = try data_control_manager.createDataSource();
-        const device = try data_control_manager.getDataDevice(seat);
+        const device = try data_control_manager.getDataDevice(seat.wl_seat);
 
         return .{
-            .seat_name = options.seat_name,
             .display = display,
             .compositor = compositor,
             .seat = seat,
@@ -149,7 +146,7 @@ pub const WlClipboard = struct {
         self.compositor.destroy();
         self.data_control_manager.destroy();
         self.globals.deinit(alloc);
-        self.seat.destroy();
+        self.seat.deinit();
         self.display.disconnect();
     }
 
@@ -325,23 +322,6 @@ fn dataControlOfferListener(data_control_offer: *ext.DataControlOfferV1, event: 
             const mime_type_slice = mem.span(offer.mime_type);
             const mime_type_copy = state.alloc.dupeZ(u8, mime_type_slice) catch return;
             state.mime_types.append(state.alloc, mime_type_copy) catch return;
-        },
-    }
-}
-
-fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, state: *struct { seat: *wl.Seat }) void {
-    switch (event) {
-        .capabilities => {},
-        .name => |name| {
-            if (state.seat_name) |seat_name| {
-                if (mem.eql(u8, seat_name, mem.span(name.name))) {
-                    state.seat = seat;
-                } else {
-                    seat.destroy();
-                }
-            } else {
-                state.seat = seat;
-            }
         },
     }
 }
