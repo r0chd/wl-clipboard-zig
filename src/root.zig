@@ -13,6 +13,7 @@ const os = std.os;
 const fs = std.fs;
 const MimeType = @import("MimeType.zig");
 const Channel = @import("Channel.zig").Channel;
+const GlobalList = @import("GlobalList.zig");
 
 pub const ClipboardContent = struct {
     pipe: i32,
@@ -65,13 +66,11 @@ const CopySignal = struct {
     pub fn deinit(self: *Self, alloc: mem.Allocator) void {
         if (self.thread) |thread| {
             thread.join();
-            //alloc.destroy(thread);
         }
+        self.thread = undefined;
 
         alloc.destroy(self.channel);
         self.channel = undefined;
-
-        self.thread = undefined;
 
         alloc.destroy(self.stop);
         self.stop = undefined;
@@ -108,52 +107,50 @@ pub const Source = union(enum) {
 };
 
 pub const WlClipboard = struct {
+    globals: GlobalList,
     display: *wl.Display,
-    registry: *wl.Registry,
-    wayland_context: WaylandContext,
+    seat_name: ?[:0]const u8,
+    compositor: *wl.Compositor,
+    seat: *wl.Seat,
+    data_control_manager: *ext.DataControlManagerV1,
     data_source: *ext.DataControlSourceV1,
     device: *ext.DataControlDeviceV1,
-    seat: ?*[:0]const u8 = null,
 
     const Self = @This();
 
-    pub fn init(options: struct { seat_name: ?[:0]const u8 = null }) !Self {
+    pub fn init(alloc: mem.Allocator, options: struct { seat_name: ?[:0]const u8 = null }) !Self {
         const display = try wl.Display.connect(null);
-        const registry = try display.getRegistry();
+        const globals = try GlobalList.init(display, alloc);
 
-        var wayland_context = WaylandContext{
-            .seat_name = options.seat_name,
-        };
-        registry.setListener(*WaylandContext, registryListener, &wayland_context);
-        // Ensure registry state is synced
-        if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        // Ensure seat state is synced
-        if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        const compositor = globals.bind(wl.Compositor, wl.Compositor.generated_version).?;
+        const seat = globals.bind(wl.Seat, wl.Seat.generated_version).?;
 
-        const data_control_manager = wayland_context.data_control_manager.?;
+        //seat.setListener(*struct { seat: *wl.Seat }, seatListener, .{ .seat = seat });
+
+        const data_control_manager = globals.bind(ext.DataControlManagerV1, ext.DataControlManagerV1.generated_version).?;
         const data_source = try data_control_manager.createDataSource();
-        const device = try data_control_manager.getDataDevice(wayland_context.seat.?);
+        const device = try data_control_manager.getDataDevice(seat);
 
         return .{
-            .wayland_context = wayland_context,
-            .data_source = data_source,
-            .registry = registry,
+            .seat_name = options.seat_name,
             .display = display,
+            .compositor = compositor,
+            .seat = seat,
+            .data_control_manager = data_control_manager,
+            .globals = globals,
+            .data_source = data_source,
             .device = device,
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *Self, alloc: mem.Allocator) void {
         self.data_source.destroy();
         self.device.destroy();
-        self.wayland_context.deinit();
-        self.registry.destroy();
+        self.compositor.destroy();
+        self.data_control_manager.destroy();
+        self.globals.deinit(alloc);
+        self.seat.destroy();
         self.display.disconnect();
-        self.data_source = undefined;
-        self.device = undefined;
-        self.wayland_context = undefined;
-        self.registry = undefined;
-        self.display = undefined;
     }
 
     pub fn copy(
@@ -332,73 +329,16 @@ fn dataControlOfferListener(data_control_offer: *ext.DataControlOfferV1, event: 
     }
 }
 
-const WaylandContext = struct {
-    seat_name: ?[:0]const u8,
-    compositor: ?*wl.Compositor = null,
-    seat: ?*wl.Seat = null,
-    data_control_manager: ?*ext.DataControlManagerV1 = null,
-
-    const Self = @This();
-
-    fn deinit(self: *Self) void {
-        if (self.compositor) |compositor| {
-            compositor.destroy();
-            self.compositor = null;
-        }
-        if (self.seat) |seat| {
-            seat.destroy();
-            self.seat = null;
-        }
-        if (self.data_control_manager) |data_control_manager| {
-            data_control_manager.destroy();
-            self.data_control_manager = null;
-        }
-        self.seat_name = null;
-    }
-};
-
-fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, state: *WaylandContext) void {
-    const EventInterfaces = enum {
-        wl_compositor,
-        wl_seat,
-        ext_data_control_manager_v1,
-    };
-
-    switch (event) {
-        .global => |global| {
-            const event_str = std.meta.stringToEnum(EventInterfaces, mem.span(global.interface)) orelse return;
-            switch (event_str) {
-                .wl_compositor => {
-                    state.compositor = registry.bind(
-                        global.name,
-                        wl.Compositor,
-                        wl.Compositor.generated_version,
-                    ) catch @panic("Failed to bind wl_compositor");
-                },
-                .ext_data_control_manager_v1 => {
-                    state.data_control_manager = registry.bind(global.name, ext.DataControlManagerV1, ext.DataControlManagerV1.generated_version) catch @panic("Failed to bind");
-                },
-                .wl_seat => {
-                    const wl_seat = registry.bind(
-                        global.name,
-                        wl.Seat,
-                        wl.Seat.generated_version,
-                    ) catch @panic("Failed to bind seat global");
-                    wl_seat.setListener(*WaylandContext, seatListener, state);
-                },
-            }
-        },
-        .global_remove => |_| {},
-    }
-}
-
-fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, state: *WaylandContext) void {
+fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, state: *struct { seat: *wl.Seat }) void {
     switch (event) {
         .capabilities => {},
         .name => |name| {
             if (state.seat_name) |seat_name| {
-                if (mem.eql(u8, seat_name, mem.span(name.name)))
+                if (mem.eql(u8, seat_name, mem.span(name.name))) {
                     state.seat = seat;
+                } else {
+                    seat.destroy();
+                }
             } else {
                 state.seat = seat;
             }

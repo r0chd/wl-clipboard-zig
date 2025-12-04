@@ -237,8 +237,8 @@ pub fn main() !void {
         break :blk wlcb.Source{ .bytes = stdin_data.? };
     };
 
-    var wl_clipboard = try wlcb.WlClipboard.init(.{});
-    defer wl_clipboard.deinit();
+    var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{});
+    defer wl_clipboard.deinit(alloc);
 
     var close_channel = try wl_clipboard.copy(alloc, source);
     defer close_channel.deinit(alloc);
@@ -271,10 +271,16 @@ pub fn main() !void {
             posix.exit(0);
         }
 
-        // Deinitialize the old wl_clipboard before creating a new one to prevent memory leaks
-        wl_clipboard.deinit();
-        wl_clipboard = try wlcb.WlClipboard.init(.{});
+        wl_clipboard.display.disconnect();
+        // GPA is not fork-safe
+        wl_clipboard = try wlcb.WlClipboard.init(std.heap.page_allocator, .{});
         try wl_clipboard.copyToContext(close_channel.copy_context);
+
+        try close_channel.startDispatch();
+        close_channel.cancelAwait();
+
+        // Exit without running defers (they'd free with wrong allocator)
+        posix.exit(0);
     }
 
     try close_channel.startDispatch();

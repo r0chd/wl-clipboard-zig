@@ -168,8 +168,8 @@ pub fn main() !void {
     const cli = Cli.init();
     verbose_enabled = cli.verbose;
 
-    var wl_clipboard = try wlcb.WlClipboard.init(.{});
-    defer wl_clipboard.deinit();
+    var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{});
+    defer wl_clipboard.deinit(alloc);
 
     var clipboard_content = try wl_clipboard.paste(alloc, .{ .mime_type = cli.type, .primary = cli.primary });
     defer clipboard_content.deinit(alloc);
