@@ -1,7 +1,6 @@
 const wl = @import("wayland").client.wl;
 const ext = @import("wayland").client.ext;
 const std = @import("std");
-const mime = @import("mime");
 const tmp = @import("tmpfile.zig");
 const mem = std.mem;
 const heap = std.heap;
@@ -15,6 +14,7 @@ const MimeType = @import("MimeType.zig");
 const Channel = @import("Channel.zig").Channel;
 const GlobalList = @import("GlobalList.zig");
 const Seat = @import("Seat.zig");
+const Device = @import("Device.zig");
 
 pub const ClipboardContent = struct {
     pipe: i32,
@@ -40,6 +40,7 @@ const CopyContext = struct {
     stop: *atomic.Value(bool),
     file: fs.File,
     display: *wl.Display,
+    paste_once: bool,
 };
 
 const CopySignal = struct {
@@ -68,17 +69,9 @@ const CopySignal = struct {
         if (self.thread) |thread| {
             thread.join();
         }
-        self.thread = undefined;
-
         alloc.destroy(self.channel);
-        self.channel = undefined;
-
         alloc.destroy(self.stop);
-        self.stop = undefined;
-
         alloc.destroy(self.copy_context);
-        self.copy_context = undefined;
-
         self.tmpfile.deinit(alloc);
     }
 };
@@ -118,12 +111,12 @@ pub const WlClipboard = struct {
 
     const Self = @This();
 
-    pub fn init(alloc: mem.Allocator, options: struct { seat_name: ?[:0]const u8 = null }) !Self {
+    pub fn init(alloc: mem.Allocator, opts: struct { seat_name: ?[:0]const u8 = null }) !Self {
         const display = try wl.Display.connect(null);
         const globals = try GlobalList.init(display, alloc);
 
         const compositor = globals.bind(wl.Compositor, wl.Compositor.generated_version).?;
-        const seat = Seat.init(display, &globals, .{ .name = options.seat_name }) orelse return error.SeatNotFound;
+        const seat = Seat.init(display, &globals, .{ .name = opts.seat_name }) orelse return error.SeatNotFound;
 
         const data_control_manager = globals.bind(ext.DataControlManagerV1, ext.DataControlManagerV1.generated_version).?;
         const data_source = try data_control_manager.createDataSource();
@@ -154,6 +147,14 @@ pub const WlClipboard = struct {
         self: *Self,
         alloc: mem.Allocator,
         source: Source,
+        opts: struct {
+            clipboard: enum {
+                regular,
+                primary,
+                both,
+            } = .regular,
+            paste_once: bool = false,
+        },
     ) !CopySignal {
         var tmpfile = try tmp.TmpFile.init(alloc, .{
             .prefix = null,
@@ -191,6 +192,7 @@ pub const WlClipboard = struct {
             .stop = stop,
             .file = tmpfile.f,
             .display = self.display,
+            .paste_once = opts.paste_once,
         };
 
         self.data_source.offer("text/plain;charset=utf-8");
@@ -200,7 +202,15 @@ pub const WlClipboard = struct {
         self.data_source.offer("UTF8_STRING");
 
         self.data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-        self.device.setSelection(self.data_source);
+
+        switch (opts.clipboard) {
+            .primary => self.device.setPrimarySelection(self.data_source),
+            .regular => self.device.setSelection(self.data_source),
+            .both => {
+                self.device.setSelection(self.data_source);
+                self.device.setPrimarySelection(self.data_source);
+            },
+        }
 
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
@@ -234,14 +244,14 @@ pub const WlClipboard = struct {
     pub fn paste(
         self: *Self,
         alloc: mem.Allocator,
-        options: struct {
+        opts: struct {
             primary: bool = false,
             mime_type: ?[:0]const u8 = null,
         },
     ) !ClipboardContent {
         var paste_context = PasteContext{
             .alloc = alloc,
-            .primary = options.primary,
+            .primary = opts.primary,
         };
         defer paste_context.deinit();
 
@@ -252,7 +262,7 @@ pub const WlClipboard = struct {
         const offer = paste_context.offer orelse return error.NoClipboardContent;
 
         var mime_type = MimeType.init(paste_context.mime_types.items);
-        const infered_mime_type = try mime_type.infer(options.mime_type);
+        const infered_mime_type = try mime_type.infer(opts.mime_type);
 
         const pipefd = try posix.pipe();
         offer.receive(infered_mime_type, pipefd[1]);
@@ -267,6 +277,8 @@ pub const WlClipboard = struct {
         };
     }
 };
+
+var repeats: u32 = 0;
 
 fn dataControlSourceListener(data_control_source: *ext.DataControlSourceV1, event: ext.DataControlSourceV1.Event, state: *CopyContext) void {
     _ = data_control_source;
@@ -290,6 +302,14 @@ fn dataControlSourceListener(data_control_source: *ext.DataControlSourceV1, even
             }
 
             posix.close(data.fd);
+
+            if (state.paste_once) {
+                repeats += 1;
+                if (repeats == 3) {
+                    state.channel.send({});
+                    state.stop.store(true, .unordered);
+                }
+            }
         },
         .cancelled => {
             state.channel.send({});

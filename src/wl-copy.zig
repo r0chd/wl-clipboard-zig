@@ -240,7 +240,15 @@ pub fn main() !void {
     var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{});
     defer wl_clipboard.deinit(alloc);
 
-    var close_channel = try wl_clipboard.copy(alloc, source);
+    var close_channel = try wl_clipboard.copy(alloc, source, .{
+        .clipboard = if (!cli.regular and cli.primary)
+            .primary
+        else if ((cli.regular and !cli.primary) or (!cli.regular and !cli.primary))
+            .regular
+        else
+            .both,
+        .paste_once = cli.paste_once,
+    });
     defer close_channel.deinit(alloc);
 
     if (!cli.foreground) {
