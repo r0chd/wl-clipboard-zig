@@ -36,17 +36,16 @@ pub const ClipboardContent = struct {
 };
 
 const CopyContext = struct {
-    sender: channel.spsc(void).Sender,
-    stop: *atomic.Value(bool),
+    sender: channel.broadcast(void).Sender,
     file: fs.File,
     display: *wl.Display,
     paste_once: bool,
 };
 
 const CopySignal = struct {
-    receiver: channel.spsc(void).Receiver,
+    receiver: channel.broadcast(void).Receiver,
+    dispatch_receiver: channel.broadcast(void).Receiver,
     thread: ?std.Thread,
-    stop: *atomic.Value(bool),
     copy_context: *CopyContext,
     tmpfile: tmp.TmpFile,
 
@@ -54,7 +53,7 @@ const CopySignal = struct {
 
     pub fn startDispatch(self: *Self) !void {
         if (self.copy_context.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        self.thread = try std.Thread.spawn(.{}, dispatchWayland, .{ self.copy_context.display, self.stop });
+        self.thread = try std.Thread.spawn(.{}, dispatchWayland, .{ self.copy_context.display, &self.dispatch_receiver });
     }
 
     pub fn cancelAwait(self: *Self) void {
@@ -62,14 +61,14 @@ const CopySignal = struct {
     }
 
     pub fn cancelled(self: *Self) bool {
-        return self.receiver.tryReceive() orelse false;
+        return self.receiver.tryReceive() != null;
     }
 
     pub fn deinit(self: *Self, alloc: mem.Allocator) void {
         if (self.thread) |thread| {
             thread.join();
         }
-        alloc.destroy(self.stop);
+        self.copy_context.sender.deinit(alloc);
         alloc.destroy(self.copy_context);
         self.tmpfile.deinit(alloc);
     }
@@ -183,15 +182,12 @@ pub const WlClipboard = struct {
 
         try output_writer.interface.flush();
 
-        const sender, const receiver = channel.spsc(void).init();
-
-        const stop = try alloc.create(std.atomic.Value(bool));
-        stop.* = std.atomic.Value(bool).init(false);
+        var sender, const receiver = try channel.broadcast(void).init(alloc);
+        const dispatch_receiver = try sender.receiver(alloc);
 
         const copy_context = try alloc.create(CopyContext);
         copy_context.* = CopyContext{
             .sender = sender,
-            .stop = stop,
             .file = tmpfile.f,
             .display = self.display,
             .paste_once = opts.paste_once,
@@ -247,8 +243,8 @@ pub const WlClipboard = struct {
 
         return .{
             .receiver = receiver,
+            .dispatch_receiver = dispatch_receiver,
             .thread = null,
-            .stop = stop,
             .copy_context = copy_context,
             .tmpfile = tmpfile,
         };
@@ -383,13 +379,11 @@ fn dataControlSourceListener(data_control_source: *ext.DataControlSourceV1, even
                 repeats += 1;
                 if (repeats == 3) {
                     state.sender.send({});
-                    state.stop.store(true, .unordered);
                 }
             }
         },
         .cancelled => {
             state.sender.send({});
-            state.stop.store(true, .unordered);
         },
     }
 }
@@ -427,8 +421,8 @@ fn dataControlOfferListener(data_control_offer: *ext.DataControlOfferV1, event: 
     }
 }
 
-fn dispatchWayland(display: *wl.Display, stop: *atomic.Value(bool)) void {
-    while (!stop.load(.unordered)) {
+fn dispatchWayland(display: *wl.Display, receiver: *channel.broadcast(void).Receiver) void {
+    while (receiver.tryReceive() == null) {
         if (display.dispatch() != .SUCCESS) return;
     }
 }
