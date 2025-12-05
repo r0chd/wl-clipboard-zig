@@ -281,7 +281,7 @@ pub fn main() !void {
         wl_clipboard.display.disconnect();
         // GPA is not fork-safe
         wl_clipboard = try wlcb.WlClipboard.init(std.heap.page_allocator, .{});
-        try wl_clipboard.copyToContext(close_channel.copy_context);
+        try wl_clipboard.copyToContext(close_channel.copy_context, .{});
 
         try close_channel.startDispatch();
         close_channel.cancelAwait();

@@ -11,7 +11,7 @@ const posix = std.posix;
 const os = std.os;
 const fs = std.fs;
 const MimeType = @import("MimeType.zig");
-const Channel = @import("Channel.zig").Channel;
+const channel = @import("channel.zig");
 const GlobalList = @import("GlobalList.zig");
 const Seat = @import("Seat.zig");
 const Device = @import("Device.zig");
@@ -36,7 +36,7 @@ pub const ClipboardContent = struct {
 };
 
 const CopyContext = struct {
-    channel: *Channel(void),
+    sender: channel.spsc(void).Sender,
     stop: *atomic.Value(bool),
     file: fs.File,
     display: *wl.Display,
@@ -44,7 +44,7 @@ const CopyContext = struct {
 };
 
 const CopySignal = struct {
-    channel: *Channel(void),
+    receiver: channel.spsc(void).Receiver,
     thread: ?std.Thread,
     stop: *atomic.Value(bool),
     copy_context: *CopyContext,
@@ -58,18 +58,17 @@ const CopySignal = struct {
     }
 
     pub fn cancelAwait(self: *Self) void {
-        self.channel.receive();
+        self.receiver.receive();
     }
 
     pub fn cancelled(self: *Self) bool {
-        return self.channel.tryReceive() orelse false;
+        return self.receiver.tryReceive() orelse false;
     }
 
     pub fn deinit(self: *Self, alloc: mem.Allocator) void {
         if (self.thread) |thread| {
             thread.join();
         }
-        alloc.destroy(self.channel);
         alloc.destroy(self.stop);
         alloc.destroy(self.copy_context);
         self.tmpfile.deinit(alloc);
@@ -184,15 +183,14 @@ pub const WlClipboard = struct {
 
         try output_writer.interface.flush();
 
-        const channel = try alloc.create(Channel(void));
-        channel.* = Channel(void).init();
+        const sender, const receiver = channel.spsc(void).init();
 
         const stop = try alloc.create(std.atomic.Value(bool));
         stop.* = std.atomic.Value(bool).init(false);
 
         const copy_context = try alloc.create(CopyContext);
         copy_context.* = CopyContext{
-            .channel = channel,
+            .sender = sender,
             .stop = stop,
             .file = tmpfile.f,
             .display = self.display,
@@ -248,7 +246,7 @@ pub const WlClipboard = struct {
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
         return .{
-            .channel = channel,
+            .receiver = receiver,
             .thread = null,
             .stop = stop,
             .copy_context = copy_context,
@@ -384,13 +382,13 @@ fn dataControlSourceListener(data_control_source: *ext.DataControlSourceV1, even
             if (state.paste_once) {
                 repeats += 1;
                 if (repeats == 3) {
-                    state.channel.send({});
+                    state.sender.send({});
                     state.stop.store(true, .unordered);
                 }
             }
         },
         .cancelled => {
-            state.channel.send({});
+            state.sender.send({});
             state.stop.store(true, .unordered);
         },
     }
