@@ -247,7 +247,6 @@ pub fn main() !void {
             .regular
         else
             .both,
-        .paste_once = cli.paste_once,
     });
     defer close_channel.deinit(alloc);
 

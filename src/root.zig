@@ -106,7 +106,8 @@ pub const WlClipboard = struct {
     compositor: *wl.Compositor,
     seat: Seat,
     data_control_manager: *ext.DataControlManagerV1,
-    data_source: *ext.DataControlSourceV1,
+    regular_data_source: *ext.DataControlSourceV1,
+    primary_data_source: *ext.DataControlSourceV1,
     device: *ext.DataControlDeviceV1,
 
     const Self = @This();
@@ -119,7 +120,8 @@ pub const WlClipboard = struct {
         const seat = Seat.init(display, &globals, .{ .name = opts.seat_name }) orelse return error.SeatNotFound;
 
         const data_control_manager = globals.bind(ext.DataControlManagerV1, ext.DataControlManagerV1.generated_version).?;
-        const data_source = try data_control_manager.createDataSource();
+        const regular_data_source = try data_control_manager.createDataSource();
+        const primary_data_source = try data_control_manager.createDataSource();
         const device = try data_control_manager.getDataDevice(seat.wl_seat);
 
         return .{
@@ -128,13 +130,15 @@ pub const WlClipboard = struct {
             .seat = seat,
             .data_control_manager = data_control_manager,
             .globals = globals,
-            .data_source = data_source,
+            .regular_data_source = regular_data_source,
+            .primary_data_source = primary_data_source,
             .device = device,
         };
     }
 
     pub fn deinit(self: *Self, alloc: mem.Allocator) void {
-        self.data_source.destroy();
+        self.regular_data_source.destroy();
+        self.primary_data_source.destroy();
         self.device.destroy();
         self.compositor.destroy();
         self.data_control_manager.destroy();
@@ -195,20 +199,49 @@ pub const WlClipboard = struct {
             .paste_once = opts.paste_once,
         };
 
-        self.data_source.offer("text/plain;charset=utf-8");
-        self.data_source.offer("text/plain");
-        self.data_source.offer("TEXT");
-        self.data_source.offer("STRING");
-        self.data_source.offer("UTF8_STRING");
-
-        self.data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
         switch (opts.clipboard) {
-            .primary => self.device.setPrimarySelection(self.data_source),
-            .regular => self.device.setSelection(self.data_source),
+            .primary => {
+                self.primary_data_source.offer("text/plain;charset=utf-8");
+                self.primary_data_source.offer("text/plain");
+                self.primary_data_source.offer("TEXT");
+                self.primary_data_source.offer("STRING");
+                self.primary_data_source.offer("UTF8_STRING");
+
+                self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+
+                self.device.setPrimarySelection(self.primary_data_source);
+            },
+            .regular => {
+                self.regular_data_source.offer("text/plain;charset=utf-8");
+                self.regular_data_source.offer("text/plain");
+                self.regular_data_source.offer("TEXT");
+                self.regular_data_source.offer("STRING");
+                self.regular_data_source.offer("UTF8_STRING");
+
+                self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+
+                self.device.setSelection(self.regular_data_source);
+            },
             .both => {
-                self.device.setSelection(self.data_source);
-                self.device.setPrimarySelection(self.data_source);
+                self.regular_data_source.offer("text/plain;charset=utf-8");
+                self.regular_data_source.offer("text/plain");
+                self.regular_data_source.offer("TEXT");
+                self.regular_data_source.offer("STRING");
+                self.regular_data_source.offer("UTF8_STRING");
+
+                self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+
+                self.device.setSelection(self.regular_data_source);
+
+                self.primary_data_source.offer("text/plain;charset=utf-8");
+                self.primary_data_source.offer("text/plain");
+                self.primary_data_source.offer("TEXT");
+                self.primary_data_source.offer("STRING");
+                self.primary_data_source.offer("UTF8_STRING");
+
+                self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+
+                self.device.setPrimarySelection(self.primary_data_source);
             },
         }
 
@@ -226,17 +259,62 @@ pub const WlClipboard = struct {
     pub fn copyToContext(
         self: *Self,
         copy_context: *CopyContext,
+        opts: struct {
+            clipboard: enum {
+                regular,
+                primary,
+                both,
+            } = .regular,
+            paste_once: bool = false,
+        },
     ) !void {
         copy_context.display = self.display;
 
-        self.data_source.offer("text/plain;charset=utf-8");
-        self.data_source.offer("text/plain");
-        self.data_source.offer("TEXT");
-        self.data_source.offer("STRING");
-        self.data_source.offer("UTF8_STRING");
+        switch (opts.clipboard) {
+            .primary => {
+                self.primary_data_source.offer("text/plain;charset=utf-8");
+                self.primary_data_source.offer("text/plain");
+                self.primary_data_source.offer("TEXT");
+                self.primary_data_source.offer("STRING");
+                self.primary_data_source.offer("UTF8_STRING");
 
-        self.data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-        self.device.setSelection(self.data_source);
+                self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+
+                self.device.setPrimarySelection(self.primary_data_source);
+            },
+            .regular => {
+                self.regular_data_source.offer("text/plain;charset=utf-8");
+                self.regular_data_source.offer("text/plain");
+                self.regular_data_source.offer("TEXT");
+                self.regular_data_source.offer("STRING");
+                self.regular_data_source.offer("UTF8_STRING");
+
+                self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+
+                self.device.setSelection(self.regular_data_source);
+            },
+            .both => {
+                self.regular_data_source.offer("text/plain;charset=utf-8");
+                self.regular_data_source.offer("text/plain");
+                self.regular_data_source.offer("TEXT");
+                self.regular_data_source.offer("STRING");
+                self.regular_data_source.offer("UTF8_STRING");
+
+                self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+
+                self.device.setSelection(self.regular_data_source);
+
+                self.primary_data_source.offer("text/plain;charset=utf-8");
+                self.primary_data_source.offer("text/plain");
+                self.primary_data_source.offer("TEXT");
+                self.primary_data_source.offer("STRING");
+                self.primary_data_source.offer("UTF8_STRING");
+
+                self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+
+                self.device.setPrimarySelection(self.primary_data_source);
+            },
+        }
 
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
     }
