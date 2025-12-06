@@ -198,13 +198,21 @@ pub const WlClipboard = struct {
         };
 
         var magic = Magic.open(.mime_type);
-        defer magic.close();
+        defer if (magic) |*m| {
+            m.close();
+        };
         const mime = blk: {
             if (opts.mime_type) |mime| {
                 break :blk mime;
+            } else if (magic) |*m| {
+                m.load(null);
+                if (m.file(tmpfile.abs_path)) |man| {
+                    break :blk man;
+                } else {
+                    break :blk "test/plain;charset=utf-8";
+                }
             } else {
-                magic.load(null);
-                break :blk magic.file(tmpfile.abs_path);
+                break :blk "test/plain;charset=utf-8";
             }
         };
 
@@ -287,12 +295,25 @@ pub const WlClipboard = struct {
         copy_context.display = self.display;
 
         var magic = Magic.open(.mime_type);
-        defer magic.close();
-        magic.load(null);
-        const mime = magic.file(copy_context.tmpfile.abs_path);
+        defer if (magic) |*m| {
+            m.close();
+        };
+        const mime = blk: {
+            if (magic) |*m| {
+                m.load(null);
+                if (m.file(copy_context.tmpfile.abs_path)) |man| {
+                    break :blk man;
+                } else {
+                    break :blk "test/plain;charset=utf-8";
+                }
+            } else {
+                break :blk "test/plain;charset=utf-8";
+            }
+        };
 
         switch (opts.clipboard) {
             .primary => {
+                self.primary_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
                     self.primary_data_source.offer("text/plain;charset=utf-8");
                     self.primary_data_source.offer("text/plain");
@@ -333,7 +354,7 @@ pub const WlClipboard = struct {
 
                 self.device.setSelection(self.regular_data_source);
 
-                self.regular_data_source.offer(mime);
+                self.primary_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
                     self.primary_data_source.offer("text/plain;charset=utf-8");
                     self.primary_data_source.offer("text/plain");

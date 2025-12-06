@@ -109,7 +109,7 @@ pub const TmpFile = struct {
 
     /// the tmp dir contains this file, it can be owned or not owned
     tmp_dir: TmpDir,
-    abs_path: []const u8,
+    abs_path: [:0]const u8,
     /// dir_path is slice of abs_path, and it is abs path
     dir_path: []const u8,
     /// sub_path is slice of abs_path
@@ -161,7 +161,7 @@ pub const TmpFile = struct {
                 random_path,
             });
 
-            break :brk try path_buf.toOwnedSlice(alloc);
+            break :brk try path_buf.toOwnedSliceSentinel(alloc, 0);
         };
         const sub_path = abs_path[tmp_dir.abs_path.len + 1 ..]; // +1 for sep
         const dir_path = abs_path[0..tmp_dir.abs_path.len];

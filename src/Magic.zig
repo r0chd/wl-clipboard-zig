@@ -10,8 +10,11 @@ pub const Flag = enum(c_int) {
     mime_type = c.MAGIC_MIME_TYPE,
 };
 
-pub fn open(flag: Flag) Self {
+pub fn open(flag: Flag) ?Self {
     const magic = c.magic_open(@intFromEnum(flag));
+    if (magic == null) {
+        return null;
+    }
 
     return .{ .magic = magic };
 }
@@ -28,6 +31,7 @@ pub fn load(self: *Self, magic_file: ?[:0]const u8) void {
     }
 }
 
-pub fn file(self: *Self, path: []const u8) [:0]const u8 {
-    return mem.span(c.magic_file(self.magic, path.ptr));
+pub fn file(self: *Self, path: [:0]const u8) ?[:0]const u8 {
+    const mime_type = c.magic_file(self.magic, path.ptr);
+    return if (mime_type) |mime| mem.span(mime) else return null;
 }

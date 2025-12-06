@@ -206,11 +206,7 @@ const help_message =
 ;
 
 pub fn main() !void {
-    var dbg_gpa = if (@import("builtin").mode == .Debug) std.heap.GeneralPurposeAllocator(.{}){} else {};
-    defer if (@TypeOf(dbg_gpa) != void) {
-        _ = dbg_gpa.deinit();
-    };
-    const alloc = if (@TypeOf(dbg_gpa) != void) dbg_gpa.allocator() else std.heap.page_allocator;
+    const alloc = std.heap.c_allocator;
 
     const cli = try Cli.init(alloc);
     verbose_enabled = cli.verbose;
