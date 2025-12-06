@@ -7,6 +7,7 @@
   zig,
   pkg-config,
   callPackage,
+  file,
 }:
 stdenv.mkDerivation (finalAttrs: {
   pname = "wl-clipboard-zig";
@@ -26,6 +27,7 @@ stdenv.mkDerivation (finalAttrs: {
 
   buildInputs = [
     wayland
+    file
   ];
 
   zigBuildFlags = [ "--release=safe" ];

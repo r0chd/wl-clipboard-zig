@@ -43,6 +43,7 @@
               nixd
               nixfmt-rfc-style
               valgrind
+              file
               ;
           };
         };

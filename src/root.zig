@@ -1,5 +1,7 @@
 const wl = @import("wayland").client.wl;
 const ext = @import("wayland").client.ext;
+const libmagic = @import("magic");
+const c = @cImport(@cInclude("magic.h"));
 const std = @import("std");
 const tmp = @import("tmpfile.zig");
 const mem = std.mem;
@@ -15,6 +17,7 @@ const channel = @import("channel.zig");
 const GlobalList = @import("GlobalList.zig");
 const Seat = @import("Seat.zig");
 const Device = @import("Device.zig");
+const Magic = @import("Magic.zig");
 
 pub const ClipboardContent = struct {
     pipe: i32,
@@ -156,6 +159,7 @@ pub const WlClipboard = struct {
                 both,
             } = .regular,
             paste_once: bool = false,
+            mime_type: ?[:0]const u8 = null,
         },
     ) !CopySignal {
         var tmpfile = try tmp.TmpFile.init(alloc, .{
@@ -193,48 +197,36 @@ pub const WlClipboard = struct {
             .paste_once = opts.paste_once,
         };
 
+        const mime = blk: {
+            if (opts.mime_type) |mime| {
+                break :blk mime;
+            } else {
+                var magic = Magic.open(.mime_type);
+                defer magic.close();
+
+                magic.load(null);
+                break :blk magic.file(tmpfile.abs_path);
+            }
+        };
+
         switch (opts.clipboard) {
             .primary => {
-                self.primary_data_source.offer("text/plain;charset=utf-8");
-                self.primary_data_source.offer("text/plain");
-                self.primary_data_source.offer("TEXT");
-                self.primary_data_source.offer("STRING");
-                self.primary_data_source.offer("UTF8_STRING");
-
+                self.primary_data_source.offer(mime);
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
                 self.device.setPrimarySelection(self.primary_data_source);
             },
             .regular => {
-                self.regular_data_source.offer("text/plain;charset=utf-8");
-                self.regular_data_source.offer("text/plain");
-                self.regular_data_source.offer("TEXT");
-                self.regular_data_source.offer("STRING");
-                self.regular_data_source.offer("UTF8_STRING");
-
+                self.regular_data_source.offer(mime);
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
                 self.device.setSelection(self.regular_data_source);
             },
             .both => {
-                self.regular_data_source.offer("text/plain;charset=utf-8");
-                self.regular_data_source.offer("text/plain");
-                self.regular_data_source.offer("TEXT");
-                self.regular_data_source.offer("STRING");
-                self.regular_data_source.offer("UTF8_STRING");
-
+                self.regular_data_source.offer(mime);
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
                 self.device.setSelection(self.regular_data_source);
 
-                self.primary_data_source.offer("text/plain;charset=utf-8");
-                self.primary_data_source.offer("text/plain");
-                self.primary_data_source.offer("TEXT");
-                self.primary_data_source.offer("STRING");
-                self.primary_data_source.offer("UTF8_STRING");
-
+                self.primary_data_source.offer(mime);
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
                 self.device.setPrimarySelection(self.primary_data_source);
             },
         }
