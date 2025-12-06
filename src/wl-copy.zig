@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const helpers = @import("helpers");
 const wlcb = @import("wl_clipboard");
 const mem = std.mem;
 const meta = std.meta;
@@ -50,6 +49,8 @@ const Arguments = enum {
     @"--seat",
     @"-t",
     @"--type",
+    @"-b",
+    @"--backend",
 };
 
 const Cli = struct {
@@ -63,6 +64,7 @@ const Cli = struct {
     type: ?[:0]const u8 = null,
     seat: ?[:0]const u8 = null,
     regular: bool = false,
+    backend: ?wlcb.Backend = null,
 
     const Self = @This();
 
@@ -110,22 +112,47 @@ const Cli = struct {
                         if (args.next()) |flag_arg| {
                             self.type = flag_arg;
                         } else {
-                            std.log.err("option requires an argument -- 'type'\n", .{});
-                            std.log.info("{s}\n", .{help_message});
-                            std.process.exit(0);
+                            std.log.err("the argument '--type <MIME/TYPE>' requires a value but none was supplied\n\n", .{});
+                            std.debug.print("Usage: wl-copy [OPTIONS] [TEXT TO COPY]...\n\n", .{});
+                            std.debug.print("For more information, try '--help'.\n", .{});
+                            std.process.exit(2);
                         }
                     },
                     .@"--seat", .@"-s" => {
                         if (args.next()) |flag_arg| {
                             self.seat = flag_arg;
                         } else {
-                            std.log.err("option requires an argument -- 'seat'\n", .{});
-                            std.log.info("{s}\n", .{help_message});
-                            std.process.exit(0);
+                            std.log.err("the argument '--seat <SEAT>' requires a value but none was supplied\n\n", .{});
+                            std.debug.print("Usage: wl-copy [OPTIONS] [TEXT TO COPY]...\n\n", .{});
+                            std.debug.print("For more information, try '--help'.\n", .{});
+                            std.process.exit(2);
                         }
                     },
                     .@"--regular", .@"-r" => {
                         self.regular = true;
+                    },
+                    .@"--backend", .@"-b" => {
+                        if (args.next()) |flag_arg| {
+                            self.backend = meta.stringToEnum(wlcb.Backend, flag_arg) orelse {
+                                std.log.err("invalid value '{s}' for '--backend <BACKEND>'\n", .{flag_arg});
+                                std.debug.print("  [possible values: ", .{});
+                                inline for (meta.fields(wlcb.Backend), 0..) |field, i| {
+                                    std.debug.print("{s}", .{field.name});
+                                    if (i != meta.fields(wlcb.Backend).len - 1) {
+                                        std.debug.print(", ", .{});
+                                    }
+                                }
+                                std.debug.print("]\n\n", .{});
+                                std.debug.print("Usage: wl-copy [OPTIONS] [TEXT TO COPY]...\n\n", .{});
+                                std.debug.print("For more information, try '--help'.\n", .{});
+                                std.process.exit(2);
+                            };
+                        } else {
+                            std.log.err("the argument '--backend <BACKEND>' requires a value but none was supplied\n\n", .{});
+                            std.debug.print("Usage: wl-copy [OPTIONS] [TEXT TO COPY]...\n\n", .{});
+                            std.debug.print("For more information, try '--help'.\n", .{});
+                            std.process.exit(2);
+                        }
                     },
                 }
             } else {
@@ -136,6 +163,12 @@ const Cli = struct {
 
         if (list.items.len > 0) {
             self.data = try list.toOwnedSlice(alloc);
+        }
+
+        if (self.backend == null) {
+            if (posix.getenv("WL_CLIPBOARD_BACKEND")) |backend| {
+                self.backend = meta.stringToEnum(wlcb.Backend, backend);
+            }
         }
 
         return self;
@@ -149,60 +182,62 @@ const Cli = struct {
 };
 
 const help_message =
-    \\Usage: wl-copy [OPTIONS] [TEXT TO COPY]...  
-    \\  
-    \\Arguments:  
-    \\  [TEXT TO COPY]...  
-    \\          Text to copy  
-    \\  
-    \\          If not specified, wl-copy will use data from the standard input.  
-    \\  
-    \\Options:  
-    \\  -o, --paste-once  
-    \\          Serve only a single paste request and then exit  
-    \\  
-    \\          This option effectively clears the clipboard after the first paste. It can be used when copying e.g. sensitive data, like  
-    \\          passwords. Note however that certain apps may have issues pasting when this option is used, in particular XWayland clients  
-    \\          are known to suffer from this.  
-    \\  
-    \\  -f, --foreground  
-    \\          Stay in the foreground instead of forking  
-    \\  
-    \\  -c, --clear  
-    \\          Clear the clipboard instead of copying  
-    \\  
-    \\  -p, --primary  
-    \\          Use the "primary" clipboard  
-    \\  
-    \\          Copying to the "primary" clipboard requires the compositor to support the data-control protocol of version 2 or above.  
-    \\  
-    \\  -r, --regular  
-    \\          Use the regular clipboard  
-    \\  
-    \\          Set this flag together with --primary to operate on both clipboards at once. Has no effect otherwise (since the regular  
-    \\          clipboard is the default clipboard).  
-    \\  
-    \\  -n, --trim-newline  
-    \\          Trim the trailing newline character before copying  
-    \\  
-    \\          This flag is only applied for text MIME types.  
-    \\  
-    \\  -s, --seat <SEAT>  
-    \\          Pick the seat to work with  
-    \\  
-    \\          By default wl-copy operates on all seats at once.  
-    \\  
-    \\  -t, --type <MIME/TYPE>  
-    \\          Override the inferred MIME type for the content  
-    \\  
-    \\  -v, --verbose...  
-    \\          Enable verbose logging  
-    \\  
-    \\  -h, --help  
-    \\          Print help (see a summary with '-h')  
-    \\  
-    \\  -V, --version  
-    \\          Print version  
+    \\Usage: wl-copy [OPTIONS] [TEXT TO COPY]...
+    \\
+    \\Arguments:
+    \\  [TEXT TO COPY]...
+    \\          Text to copy
+    \\
+    \\          If not specified, wl-copy will use data from the standard input
+    \\
+    \\Options:
+    \\  -o, --paste-once
+    \\          Serve only a single paste request and then exit
+    \\
+    \\          This option effectively clears the clipboard after the first paste. It can be used when copying e.g. sensitive data, like passwords. Note however that certain apps may have issues pasting when this option is used, in particular XWayland clients are known to suffer from this
+    \\
+    \\  -f, --foreground
+    \\          Stay in the foreground instead of forking
+    \\
+    \\  -c, --clear
+    \\          Clear the clipboard instead of copying
+    \\
+    \\  -p, --primary
+    \\          Use the "primary" clipboard
+    \\
+    \\          Copying to the "primary" clipboard requires the compositor to support the data-control protocol of version 2 or above
+    \\
+    \\  -r, --regular
+    \\          Use the regular clipboard
+    \\
+    \\          Set this flag together with --primary to operate on both clipboards at once. Has no effect otherwise (since the regular clipboard is the default clipboard)
+    \\
+    \\  -n, --trim-newline
+    \\          Trim the trailing newline character before copying
+    \\
+    \\          This flag is only applied for text MIME types
+    \\
+    \\  -s, --seat <SEAT>
+    \\          Pick the seat to work with
+    \\
+    \\          By default wl-copy operates on all seats at once
+    \\
+    \\  -t, --type <MIME/TYPE>
+    \\          Override the inferred MIME type for the content
+    \\
+    \\  -b, --backend <BACKEND>
+    \\          Force clipboard backend 
+    \\
+    \\          [env: WL_CLIPBOARD_BACKEND=]
+    \\
+    \\  -v, --verbose
+    \\          Enable verbose logging
+    \\
+    \\  -h, --help
+    \\          Print help (see a summary with '-h')
+    \\
+    \\  -V, --version
+    \\          Print version
 ;
 
 pub fn main() !void {
@@ -233,7 +268,7 @@ pub fn main() !void {
         break :blk wlcb.Source{ .bytes = stdin_data.? };
     };
 
-    var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{});
+    var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{ .force_backend = cli.backend });
     defer wl_clipboard.deinit(alloc);
 
     var close_channel = try wl_clipboard.copy(alloc, source, .{
@@ -277,8 +312,16 @@ pub fn main() !void {
 
         wl_clipboard.display.disconnect();
         // GPA is not fork-safe
-        wl_clipboard = try wlcb.WlClipboard.init(std.heap.page_allocator, .{});
-        try wl_clipboard.copyToContext(close_channel.copy_context, .{});
+        wl_clipboard = try wlcb.WlClipboard.init(std.heap.page_allocator, .{ .force_backend = cli.backend });
+        try wl_clipboard.copyToContext(close_channel.copy_context, .{
+            .clipboard = if (!cli.regular and cli.primary)
+                .primary
+            else if ((cli.regular and !cli.primary) or (!cli.regular and !cli.primary))
+                .regular
+            else
+                .both,
+            .mime_type = cli.type,
+        });
 
         try close_channel.startDispatch();
         close_channel.cancelAwait();

@@ -42,6 +42,8 @@ const Arguments = enum {
     @"-s",
     @"--type",
     @"-t",
+    @"--backend",
+    @"-b",
 };
 
 const Cli = struct {
@@ -51,6 +53,7 @@ const Cli = struct {
     verbose: bool = false,
     list_types: bool = false,
     primary: bool = false,
+    backend: ?wlcb.Backend = null,
 
     const Self = @This();
 
@@ -63,8 +66,10 @@ const Cli = struct {
             if (index == 0) continue;
 
             const argument = std.meta.stringToEnum(Arguments, arg) orelse {
-                std.log.err("Argument {s} not found", .{arg});
-                std.process.exit(1);
+                std.log.err("unexpected argument '{s}' found\n", .{arg});
+                std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
+                std.debug.print("For more information, try '--help'.\n", .{});
+                std.process.exit(2);
             };
             switch (argument) {
                 .@"--help", .@"-h" => {
@@ -92,20 +97,51 @@ const Cli = struct {
                     if (args.next()) |flag_arg| {
                         self.seat = flag_arg;
                     } else {
-                        std.log.err("option requires an argument -- 'seat'\n", .{});
-                        std.log.info("{s}\n", .{help_message});
-                        std.process.exit(0);
+                        std.log.err("the argument '--seat <SEAT>' requires a value but none was supplied\n", .{});
+                        std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
+                        std.debug.print("For more information, try '--help'.\n", .{});
+                        std.process.exit(2);
                     }
                 },
                 .@"--type", .@"-t" => {
                     if (args.next()) |flag_arg| {
                         self.type = flag_arg;
                     } else {
-                        std.log.err("option requires an argument -- 'type'\n", .{});
-                        std.log.info("{s}\n", .{help_message});
-                        std.process.exit(0);
+                        std.log.err("the argument '--type <MIME/TYPE>' requires a value but none was supplied\n", .{});
+                        std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
+                        std.debug.print("For more information, try '--help'.\n", .{});
+                        std.process.exit(2);
                     }
                 },
+                .@"--backend", .@"-b" => {
+                    if (args.next()) |flag_arg| {
+                        self.backend = meta.stringToEnum(wlcb.Backend, flag_arg) orelse {
+                            std.log.err("invalid value '{s}' for '--backend <BACKEND>'\n", .{flag_arg});
+                            std.debug.print("  [possible values: ", .{});
+                            inline for (meta.fields(wlcb.Backend), 0..) |field, i| {
+                                std.debug.print("{s}", .{field.name});
+                                if (i != meta.fields(wlcb.Backend).len - 1) {
+                                    std.debug.print(", ", .{});
+                                }
+                            }
+                            std.debug.print("]\n\n", .{});
+                            std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
+                            std.debug.print("For more information, try '--help'.\n", .{});
+                            std.process.exit(2);
+                        };
+                    } else {
+                        std.log.err("the argument '--backend <BACKEND>' requires a value but none was supplied\n", .{});
+                        std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
+                        std.debug.print("For more information, try '--help'.\n", .{});
+                        std.process.exit(2);
+                    }
+                },
+            }
+        }
+
+        if (self.backend == null) {
+            if (posix.getenv("WL_CLIPBOARD_BACKEND")) |backend| {
+                self.backend = meta.stringToEnum(wlcb.Backend, backend);
             }
         }
 
@@ -114,43 +150,46 @@ const Cli = struct {
 };
 
 const help_message =
-    \\Usage: wl-paste [OPTIONS]  
-    \\  
-    \\Options:  
-    \\  -l, --list-types  
-    \\          List the offered MIME types instead of pasting  
-    \\  
-    \\  -p, --primary  
-    \\          Use the "primary" clipboard  
-    \\  
-    \\          Pasting to the "primary" clipboard requires the compositor to support the data-control protocol of version 2 or above.  
-    \\  
-    \\  -n, --no-newline  
-    \\          Do not append a newline character  
-    \\  
-    \\          By default the newline character is appended automatically when pasting text MIME types.  
-    \\  
-    \\  -s, --seat <SEAT>  
-    \\          Pick the seat to work with  
-    \\  
-    \\          By default the seat used is unspecified (it depends on the order returned by the compositor). This is perfectly fine when  
-    \\          only a single seat is present, so for most configurations.  
-    \\  
-    \\  -t, --type <MIME/TYPE>  
-    \\          Request the given MIME type instead of inferring the MIME type  
-    \\  
-    \\          As a special case, specifying "text" will look for a number of plain text types, prioritizing ones that are known to give  
-    \\          UTF-8 text.  
-    \\  
-    \\  -v, --verbose...  
-    \\          Enable verbose logging  
-    \\  
-    \\  -h, --help  
-    \\          Print help (see a summary with '-h')  
-    \\  
-    \\  -V, --version  
-    \\          Print version  
-    \\  
+    \\Usage: wl-paste [OPTIONS]
+    \\
+    \\Options:
+    \\  -l, --list-types
+    \\          List the offered MIME types instead of pasting
+    \\
+    \\          Pasting to the "primary" clipboard requires the compositor to support the data-control protocol of version 2 or above
+    \\
+    \\  -p, --primary
+    \\          Use the "primary" clipboard
+    \\
+    \\  -n, --no-newline
+    \\          Do not append a newline character
+    \\
+    \\          By default the newline character is appended automatically when pasting text MIME types
+    \\
+    \\  -s, --seat <SEAT>
+    \\          Pick the seat to work with
+    \\
+    \\          By default the seat used is unspecified (it depends on the order returned by the compositor). This is perfectly fine when only a single seat is present, so for most configurations
+    \\
+    \\  -t, --type <MIME/TYPE>
+    \\          Request the given MIME type instead of inferring the MIME type
+    \\
+    \\          As a special case, specifying "text" will look for a number of plain text types, prioritizing ones that are known to give UTF-8 text
+    \\
+    \\  -b, --backend <BACKEND>
+    \\          Force clipboard backend 
+    \\
+    \\          [env: WL_CLIPBOARD_BACKEND=]
+    \\
+    \\  -v, --verbose
+    \\          Enable verbose logging
+    \\
+    \\  -h, --help
+    \\          Print help (see a summary with '-h')
+    \\
+    \\  -V, --version
+    \\          Print version
+    \\
 ;
 
 pub fn main() !void {

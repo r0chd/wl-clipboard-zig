@@ -1,7 +1,4 @@
 const wl = @import("wayland").client.wl;
-const ext = @import("wayland").client.ext;
-const libmagic = @import("magic");
-const c = @cImport(@cInclude("magic.h"));
 const std = @import("std");
 const tmp = @import("tmpfile.zig");
 const mem = std.mem;
@@ -19,6 +16,7 @@ const Seat = @import("Seat.zig");
 const Device = @import("Device.zig");
 const Magic = @import("Magic.zig");
 const mimeTypeIsText = @import("MimeType.zig").mimeTypeIsText;
+pub const Backend = @import("Device.zig").Backend;
 
 pub const ClipboardContent = struct {
     pipe: i32,
@@ -78,7 +76,8 @@ const CopySignal = struct {
 };
 
 const PasteContext = struct {
-    offer: ?*ext.DataControlOfferV1 = null,
+    current_offer: ?*Device.DataOffer = null,
+    selected_offer: ?*Device.DataOffer = null,
     mime_types: std.ArrayList([:0]const u8) = .empty,
     alloc: mem.Allocator,
     primary: bool,
@@ -86,9 +85,9 @@ const PasteContext = struct {
     const Self = @This();
 
     fn deinit(self: *Self) void {
-        if (self.offer) |offer| {
-            offer.destroy();
-            self.offer = null;
+        if (self.selected_offer) |offer| {
+            offer.deinit();
+            self.selected_offer = null;
         }
         self.mime_types.clearRetainingCapacity();
         self.primary = false;
@@ -106,43 +105,42 @@ pub const WlClipboard = struct {
     display: *wl.Display,
     compositor: *wl.Compositor,
     seat: Seat,
-    data_control_manager: *ext.DataControlManagerV1,
-    regular_data_source: *ext.DataControlSourceV1,
-    primary_data_source: *ext.DataControlSourceV1,
-    device: *ext.DataControlDeviceV1,
+    device: Device,
+    regular_data_source: Device.DataSource,
+    primary_data_source: Device.DataSource,
 
     const Self = @This();
 
-    pub fn init(alloc: mem.Allocator, opts: struct { seat_name: ?[:0]const u8 = null }) !Self {
+    pub fn init(alloc: mem.Allocator, opts: struct {
+        seat_name: ?[:0]const u8 = null,
+        force_backend: ?Backend = null,
+    }) !Self {
         const display = try wl.Display.connect(null);
         const globals = try GlobalList.init(display, alloc);
 
         const compositor = globals.bind(wl.Compositor, wl.Compositor.generated_version).?;
         const seat = Seat.init(display, &globals, .{ .name = opts.seat_name }) orelse return error.SeatNotFound;
 
-        const data_control_manager = globals.bind(ext.DataControlManagerV1, ext.DataControlManagerV1.generated_version).?;
-        const regular_data_source = try data_control_manager.createDataSource();
-        const primary_data_source = try data_control_manager.createDataSource();
-        const device = try data_control_manager.getDataDevice(seat.wl_seat);
+        var device = try Device.init(&globals, seat.wl_seat, .{ .force_backend = opts.force_backend });
+        const regular_data_source = try device.createDataSource();
+        const primary_data_source = try device.createDataSource();
 
         return .{
             .display = display,
             .compositor = compositor,
             .seat = seat,
-            .data_control_manager = data_control_manager,
+            .device = device,
             .globals = globals,
             .regular_data_source = regular_data_source,
             .primary_data_source = primary_data_source,
-            .device = device,
         };
     }
 
     pub fn deinit(self: *Self, alloc: mem.Allocator) void {
-        self.regular_data_source.destroy();
-        self.primary_data_source.destroy();
-        self.device.destroy();
+        self.regular_data_source.deinit();
+        self.primary_data_source.deinit();
+        self.device.deinit();
         self.compositor.destroy();
-        self.data_control_manager.destroy();
         self.globals.deinit(alloc);
         self.seat.deinit();
         self.display.disconnect();
@@ -202,8 +200,8 @@ pub const WlClipboard = struct {
             m.close();
         };
         const mime = blk: {
-            if (opts.mime_type) |mime| {
-                break :blk mime;
+            if (opts.mime_type) |mime_opt| {
+                break :blk mime_opt;
             } else if (magic) |*m| {
                 m.load(null);
                 if (m.file(tmpfile.abs_path)) |man| {
@@ -228,7 +226,7 @@ pub const WlClipboard = struct {
                 }
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-                self.device.setPrimarySelection(self.primary_data_source);
+                self.device.setPrimarySelection(&self.primary_data_source);
             },
             .regular => {
                 self.regular_data_source.offer(mime);
@@ -241,7 +239,7 @@ pub const WlClipboard = struct {
                 }
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-                self.device.setSelection(self.regular_data_source);
+                self.device.setSelection(&self.regular_data_source);
             },
             .both => {
                 self.regular_data_source.offer(mime);
@@ -254,7 +252,7 @@ pub const WlClipboard = struct {
                 }
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-                self.device.setSelection(self.regular_data_source);
+                self.device.setSelection(&self.regular_data_source);
 
                 self.primary_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
@@ -266,7 +264,7 @@ pub const WlClipboard = struct {
                 }
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-                self.device.setPrimarySelection(self.primary_data_source);
+                self.device.setPrimarySelection(&self.primary_data_source);
             },
         }
 
@@ -290,6 +288,7 @@ pub const WlClipboard = struct {
                 both,
             } = .regular,
             paste_once: bool = false,
+            mime_type: ?[:0]const u8 = null,
         },
     ) !void {
         copy_context.display = self.display;
@@ -299,7 +298,9 @@ pub const WlClipboard = struct {
             m.close();
         };
         const mime = blk: {
-            if (magic) |*m| {
+            if (opts.mime_type) |mime_opt| {
+                break :blk mime_opt;
+            } else if (magic) |*m| {
                 m.load(null);
                 if (m.file(copy_context.tmpfile.abs_path)) |man| {
                     break :blk man;
@@ -324,7 +325,7 @@ pub const WlClipboard = struct {
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
 
-                self.device.setPrimarySelection(self.primary_data_source);
+                self.device.setPrimarySelection(&self.primary_data_source);
             },
             .regular => {
                 self.regular_data_source.offer(mime);
@@ -338,7 +339,7 @@ pub const WlClipboard = struct {
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
 
-                self.device.setSelection(self.regular_data_source);
+                self.device.setSelection(&self.regular_data_source);
             },
             .both => {
                 self.regular_data_source.offer(mime);
@@ -352,7 +353,7 @@ pub const WlClipboard = struct {
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
 
-                self.device.setSelection(self.regular_data_source);
+                self.device.setSelection(&self.regular_data_source);
 
                 self.primary_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
@@ -365,7 +366,7 @@ pub const WlClipboard = struct {
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
 
-                self.device.setPrimarySelection(self.primary_data_source);
+                self.device.setPrimarySelection(&self.primary_data_source);
             },
         }
 
@@ -390,7 +391,7 @@ pub const WlClipboard = struct {
 
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
-        const offer = paste_context.offer orelse return error.NoClipboardContent;
+        const offer = paste_context.selected_offer orelse return error.NoClipboardContent;
 
         var mime_type = MimeType.init(paste_context.mime_types.items);
         const infered_mime_type = try mime_type.infer(opts.mime_type);
@@ -411,8 +412,8 @@ pub const WlClipboard = struct {
 
 var repeats: u32 = 0;
 
-fn dataControlSourceListener(data_control_source: *ext.DataControlSourceV1, event: ext.DataControlSourceV1.Event, state: *CopyContext) void {
-    _ = data_control_source;
+fn dataControlSourceListener(data_source: *Device.DataSource, event: Device.DataSource.Event, state: *CopyContext) void {
+    _ = data_source;
     switch (event) {
         .send => |data| {
             var buf: [4096]u8 = undefined;
@@ -447,34 +448,34 @@ fn dataControlSourceListener(data_control_source: *ext.DataControlSourceV1, even
     }
 }
 
-fn deviceListener(data_control_device: *ext.DataControlDeviceV1, event: ext.DataControlDeviceV1.Event, state: *PasteContext) void {
-    _ = data_control_device;
+fn deviceListener(device: *Device, event: Device.DeviceEvent, state: *PasteContext) void {
+    _ = device;
 
     switch (event) {
         .data_offer => |offer| {
-            offer.id.setListener(*PasteContext, dataControlOfferListener, state);
+            state.current_offer = offer;
+            offer.setListener(*PasteContext, dataControlOfferListener, state);
         },
         .primary_selection => |offer| {
             if (state.primary) {
-                state.offer = offer.id;
+                state.selected_offer = offer;
             }
         },
         .selection => |offer| {
             if (!state.primary) {
-                state.offer = offer.id;
+                state.selected_offer = offer;
             }
         },
         .finished => {},
     }
 }
 
-fn dataControlOfferListener(data_control_offer: *ext.DataControlOfferV1, event: ext.DataControlOfferV1.Event, state: *PasteContext) void {
-    _ = data_control_offer;
+fn dataControlOfferListener(data_offer: *Device.DataOffer, event: Device.DataOffer.Event, state: *PasteContext) void {
+    _ = data_offer;
 
     switch (event) {
-        .offer => |offer| {
-            const mime_type_slice = mem.span(offer.mime_type);
-            const mime_type_copy = state.alloc.dupeZ(u8, mime_type_slice) catch return;
+        .offer => |mime_type| {
+            const mime_type_copy = state.alloc.dupeZ(u8, mime_type) catch return;
             state.mime_types.append(state.alloc, mime_type_copy) catch return;
         },
     }
