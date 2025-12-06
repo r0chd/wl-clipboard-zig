@@ -1,5 +1,7 @@
 const wl = @import("wayland").client.wl;
 const ext = @import("wayland").client.ext;
+const libmagic = @import("magic");
+const c = @cImport(@cInclude("magic.h"));
 const std = @import("std");
 const tmp = @import("tmpfile.zig");
 const mem = std.mem;
@@ -15,6 +17,8 @@ const channel = @import("channel.zig");
 const GlobalList = @import("GlobalList.zig");
 const Seat = @import("Seat.zig");
 const Device = @import("Device.zig");
+const Magic = @import("Magic.zig");
+const mimeTypeIsText = @import("MimeType.zig").mimeTypeIsText;
 
 pub const ClipboardContent = struct {
     pipe: i32,
@@ -37,7 +41,7 @@ pub const ClipboardContent = struct {
 
 const CopyContext = struct {
     sender: channel.broadcast(void).Sender,
-    file: fs.File,
+    tmpfile: tmp.TmpFile,
     display: *wl.Display,
     paste_once: bool,
 };
@@ -47,7 +51,6 @@ const CopySignal = struct {
     dispatch_receiver: channel.broadcast(void).Receiver,
     thread: ?std.Thread,
     copy_context: *CopyContext,
-    tmpfile: tmp.TmpFile,
 
     const Self = @This();
 
@@ -69,8 +72,8 @@ const CopySignal = struct {
             thread.join();
         }
         self.copy_context.sender.deinit(alloc);
+        self.copy_context.tmpfile.deinit(alloc);
         alloc.destroy(self.copy_context);
-        self.tmpfile.deinit(alloc);
     }
 };
 
@@ -156,6 +159,7 @@ pub const WlClipboard = struct {
                 both,
             } = .regular,
             paste_once: bool = false,
+            mime_type: ?[:0]const u8 = null,
         },
     ) !CopySignal {
         var tmpfile = try tmp.TmpFile.init(alloc, .{
@@ -188,53 +192,72 @@ pub const WlClipboard = struct {
         const copy_context = try alloc.create(CopyContext);
         copy_context.* = CopyContext{
             .sender = sender,
-            .file = tmpfile.f,
+            .tmpfile = tmpfile,
             .display = self.display,
             .paste_once = opts.paste_once,
         };
 
+        var magic = Magic.open(.mime_type);
+        defer magic.close();
+        const mime = blk: {
+            if (opts.mime_type) |mime| {
+                break :blk mime;
+            } else {
+                magic.load(null);
+                break :blk magic.file(tmpfile.abs_path);
+            }
+        };
+
         switch (opts.clipboard) {
             .primary => {
-                self.primary_data_source.offer("text/plain;charset=utf-8");
-                self.primary_data_source.offer("text/plain");
-                self.primary_data_source.offer("TEXT");
-                self.primary_data_source.offer("STRING");
-                self.primary_data_source.offer("UTF8_STRING");
+                self.primary_data_source.offer(mime);
+                if (mimeTypeIsText(mime)) {
+                    self.primary_data_source.offer("text/plain;charset=utf-8");
+                    self.primary_data_source.offer("text/plain");
+                    self.primary_data_source.offer("TEXT");
+                    self.primary_data_source.offer("STRING");
+                    self.primary_data_source.offer("UTF8_STRING");
+                }
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
                 self.device.setPrimarySelection(self.primary_data_source);
             },
             .regular => {
-                self.regular_data_source.offer("text/plain;charset=utf-8");
-                self.regular_data_source.offer("text/plain");
-                self.regular_data_source.offer("TEXT");
-                self.regular_data_source.offer("STRING");
-                self.regular_data_source.offer("UTF8_STRING");
+                self.regular_data_source.offer(mime);
+                if (mimeTypeIsText(mime)) {
+                    self.regular_data_source.offer("text/plain;charset=utf-8");
+                    self.regular_data_source.offer("text/plain");
+                    self.regular_data_source.offer("TEXT");
+                    self.regular_data_source.offer("STRING");
+                    self.regular_data_source.offer("UTF8_STRING");
+                }
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
                 self.device.setSelection(self.regular_data_source);
             },
             .both => {
-                self.regular_data_source.offer("text/plain;charset=utf-8");
-                self.regular_data_source.offer("text/plain");
-                self.regular_data_source.offer("TEXT");
-                self.regular_data_source.offer("STRING");
-                self.regular_data_source.offer("UTF8_STRING");
+                self.regular_data_source.offer(mime);
+                if (mimeTypeIsText(mime)) {
+                    self.regular_data_source.offer("text/plain;charset=utf-8");
+                    self.regular_data_source.offer("text/plain");
+                    self.regular_data_source.offer("TEXT");
+                    self.regular_data_source.offer("STRING");
+                    self.regular_data_source.offer("UTF8_STRING");
+                }
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
                 self.device.setSelection(self.regular_data_source);
 
-                self.primary_data_source.offer("text/plain;charset=utf-8");
-                self.primary_data_source.offer("text/plain");
-                self.primary_data_source.offer("TEXT");
-                self.primary_data_source.offer("STRING");
-                self.primary_data_source.offer("UTF8_STRING");
+                self.primary_data_source.offer(mime);
+                if (mimeTypeIsText(mime)) {
+                    self.primary_data_source.offer("text/plain;charset=utf-8");
+                    self.primary_data_source.offer("text/plain");
+                    self.primary_data_source.offer("TEXT");
+                    self.primary_data_source.offer("STRING");
+                    self.primary_data_source.offer("UTF8_STRING");
+                }
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
                 self.device.setPrimarySelection(self.primary_data_source);
             },
         }
@@ -246,7 +269,6 @@ pub const WlClipboard = struct {
             .dispatch_receiver = dispatch_receiver,
             .thread = null,
             .copy_context = copy_context,
-            .tmpfile = tmpfile,
         };
     }
 
@@ -264,45 +286,61 @@ pub const WlClipboard = struct {
     ) !void {
         copy_context.display = self.display;
 
+        var magic = Magic.open(.mime_type);
+        defer magic.close();
+        magic.load(null);
+        const mime = magic.file(copy_context.tmpfile.abs_path);
+
         switch (opts.clipboard) {
             .primary => {
-                self.primary_data_source.offer("text/plain;charset=utf-8");
-                self.primary_data_source.offer("text/plain");
-                self.primary_data_source.offer("TEXT");
-                self.primary_data_source.offer("STRING");
-                self.primary_data_source.offer("UTF8_STRING");
+                if (mimeTypeIsText(mime)) {
+                    self.primary_data_source.offer("text/plain;charset=utf-8");
+                    self.primary_data_source.offer("text/plain");
+                    self.primary_data_source.offer("TEXT");
+                    self.primary_data_source.offer("STRING");
+                    self.primary_data_source.offer("UTF8_STRING");
+                }
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
 
                 self.device.setPrimarySelection(self.primary_data_source);
             },
             .regular => {
-                self.regular_data_source.offer("text/plain;charset=utf-8");
-                self.regular_data_source.offer("text/plain");
-                self.regular_data_source.offer("TEXT");
-                self.regular_data_source.offer("STRING");
-                self.regular_data_source.offer("UTF8_STRING");
+                self.regular_data_source.offer(mime);
+                if (mimeTypeIsText(mime)) {
+                    self.regular_data_source.offer("text/plain;charset=utf-8");
+                    self.regular_data_source.offer("text/plain");
+                    self.regular_data_source.offer("TEXT");
+                    self.regular_data_source.offer("STRING");
+                    self.regular_data_source.offer("UTF8_STRING");
+                }
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
 
                 self.device.setSelection(self.regular_data_source);
             },
             .both => {
-                self.regular_data_source.offer("text/plain;charset=utf-8");
-                self.regular_data_source.offer("text/plain");
-                self.regular_data_source.offer("TEXT");
-                self.regular_data_source.offer("STRING");
-                self.regular_data_source.offer("UTF8_STRING");
+                self.regular_data_source.offer(mime);
+                if (mimeTypeIsText(mime)) {
+                    self.regular_data_source.offer("text/plain;charset=utf-8");
+                    self.regular_data_source.offer("text/plain");
+                    self.regular_data_source.offer("TEXT");
+                    self.regular_data_source.offer("STRING");
+                    self.regular_data_source.offer("UTF8_STRING");
+                }
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
 
                 self.device.setSelection(self.regular_data_source);
 
-                self.primary_data_source.offer("text/plain;charset=utf-8");
-                self.primary_data_source.offer("text/plain");
-                self.primary_data_source.offer("TEXT");
-                self.primary_data_source.offer("STRING");
-                self.primary_data_source.offer("UTF8_STRING");
+                self.regular_data_source.offer(mime);
+                if (mimeTypeIsText(mime)) {
+                    self.primary_data_source.offer("text/plain;charset=utf-8");
+                    self.primary_data_source.offer("text/plain");
+                    self.primary_data_source.offer("TEXT");
+                    self.primary_data_source.offer("STRING");
+                    self.primary_data_source.offer("UTF8_STRING");
+                }
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
 
@@ -357,10 +395,10 @@ fn dataControlSourceListener(data_control_source: *ext.DataControlSourceV1, even
     switch (event) {
         .send => |data| {
             var buf: [4096]u8 = undefined;
-            _ = state.file.seekTo(0) catch return;
+            _ = state.tmpfile.f.seekTo(0) catch return;
 
             while (true) {
-                const bytes_read = posix.read(state.file.handle, &buf) catch |err| {
+                const bytes_read = posix.read(state.tmpfile.f.handle, &buf) catch |err| {
                     std.log.err("Failed to read from temp file: {}", .{err});
                     break;
                 };

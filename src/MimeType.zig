@@ -71,18 +71,6 @@ pub fn infer(self: *Self, explicit_mime_type: ?[:0]const u8) ![:0]const u8 {
         }
     }
 
-    if (sliceContains(self.available_mime_types, "text/plain;charset=utf-8")) {
-        return "text/plain;charset=utf-8";
-    } else if (sliceContains(self.available_mime_types, "text/plain")) {
-        return "text/plain";
-    } else {
-        for (self.available_mime_types) |mime_type| {
-            if (mimeTypeIsText(mime_type)) {
-                return mime_type;
-            }
-        }
-    }
-
     return self.available_mime_types[0];
 }
 
@@ -95,7 +83,7 @@ pub fn sliceContains(haystack: []const [:0]const u8, needle: [:0]const u8) bool 
     return false;
 }
 
-fn mimeTypeIsText(mime_type: []const u8) bool {
+pub fn mimeTypeIsText(mime_type: []const u8) bool {
     const basic = mem.startsWith(u8, mime_type, "text/") or
         mem.eql(u8, mime_type, "TEXT") or
         mem.eql(u8, mime_type, "STRING") or

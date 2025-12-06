@@ -24,6 +24,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    mod.linkSystemLibrary("magic", .{});
+    mod.link_libc = true;
     mod.addImport("mime", mime.module("mime"));
     mod.addImport("wayland", wayland);
 
@@ -38,6 +40,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    wl_copy.linkSystemLibrary("magic");
     wl_copy.linkLibC();
     wl_copy.linkSystemLibrary("wayland-client");
     b.installArtifact(wl_copy);
@@ -53,6 +56,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    wl_paste.linkSystemLibrary("magic");
     wl_paste.linkLibC();
     wl_paste.linkSystemLibrary("wayland-client");
     b.installArtifact(wl_paste);
