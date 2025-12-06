@@ -165,7 +165,7 @@ pub const WlClipboard = struct {
         var tmpfile = try tmp.TmpFile.init(alloc, .{
             .prefix = null,
             .dir_prefix = null,
-            .flags = .{ .read = true, .mode = 0o400, .exclusive = true, .lock = .exclusive },
+            .flags = .{ .read = true, .mode = 0o400 },
             .dir_opts = .{},
         });
 
