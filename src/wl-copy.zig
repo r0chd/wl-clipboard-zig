@@ -320,7 +320,6 @@ pub fn main() !void {
                 .regular
             else
                 .both,
-            .mime_type = cli.type,
         });
 
         try close_channel.startDispatch();

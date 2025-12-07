@@ -42,6 +42,7 @@ const CopyContext = struct {
     tmpfile: tmp.TmpFile,
     display: *wl.Display,
     paste_once: bool,
+    mime_type: [:0]const u8,
 };
 
 const CopySignal = struct {
@@ -187,14 +188,6 @@ pub const WlClipboard = struct {
         var sender, const receiver = try channel.broadcast(void).init(alloc);
         const dispatch_receiver = try sender.receiver(alloc);
 
-        const copy_context = try alloc.create(CopyContext);
-        copy_context.* = CopyContext{
-            .sender = sender,
-            .tmpfile = tmpfile,
-            .display = self.display,
-            .paste_once = opts.paste_once,
-        };
-
         var magic = Magic.open(.mime_type);
         defer if (magic) |*m| {
             m.close();
@@ -212,6 +205,15 @@ pub const WlClipboard = struct {
             } else {
                 break :blk "test/plain;charset=utf-8";
             }
+        };
+
+        const copy_context = try alloc.create(CopyContext);
+        copy_context.* = CopyContext{
+            .sender = sender,
+            .tmpfile = tmpfile,
+            .display = self.display,
+            .paste_once = opts.paste_once,
+            .mime_type = try alloc.dupeZ(u8, mime),
         };
 
         switch (opts.clipboard) {
@@ -288,30 +290,11 @@ pub const WlClipboard = struct {
                 both,
             } = .regular,
             paste_once: bool = false,
-            mime_type: ?[:0]const u8 = null,
         },
     ) !void {
         copy_context.display = self.display;
 
-        var magic = Magic.open(.mime_type);
-        defer if (magic) |*m| {
-            m.close();
-        };
-        const mime = blk: {
-            if (opts.mime_type) |mime_opt| {
-                break :blk mime_opt;
-            } else if (magic) |*m| {
-                m.load(null);
-                if (m.file(copy_context.tmpfile.abs_path)) |man| {
-                    break :blk man;
-                } else {
-                    break :blk "test/plain;charset=utf-8";
-                }
-            } else {
-                break :blk "test/plain;charset=utf-8";
-            }
-        };
-
+        const mime = copy_context.mime_type;
         switch (opts.clipboard) {
             .primary => {
                 self.primary_data_source.offer(mime);
