@@ -196,14 +196,13 @@ pub const WlClipboard = struct {
             if (opts.mime_type) |mime_opt| {
                 break :blk mime_opt;
             } else if (magic) |*m| {
-                m.load(null);
                 if (m.file(tmpfile.abs_path)) |man| {
                     break :blk man;
                 } else {
-                    break :blk "test/plain;charset=utf-8";
+                    break :blk "text/plain;charset=utf-8";
                 }
             } else {
-                break :blk "test/plain;charset=utf-8";
+                break :blk "text/plain;charset=utf-8";
             }
         };
 
@@ -218,52 +217,53 @@ pub const WlClipboard = struct {
 
         switch (opts.clipboard) {
             .primary => {
-                self.primary_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
                     self.primary_data_source.offer("text/plain;charset=utf-8");
                     self.primary_data_source.offer("text/plain");
                     self.primary_data_source.offer("TEXT");
                     self.primary_data_source.offer("STRING");
                     self.primary_data_source.offer("UTF8_STRING");
+                } else {
+                    self.primary_data_source.offer(mime);
                 }
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
                 self.device.setPrimarySelection(&self.primary_data_source);
             },
             .regular => {
-                self.regular_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
                     self.regular_data_source.offer("text/plain;charset=utf-8");
                     self.regular_data_source.offer("text/plain");
                     self.regular_data_source.offer("TEXT");
                     self.regular_data_source.offer("STRING");
                     self.regular_data_source.offer("UTF8_STRING");
+                } else {
+                    self.regular_data_source.offer(mime);
                 }
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
                 self.device.setSelection(&self.regular_data_source);
             },
             .both => {
-                self.regular_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
                     self.regular_data_source.offer("text/plain;charset=utf-8");
                     self.regular_data_source.offer("text/plain");
                     self.regular_data_source.offer("TEXT");
                     self.regular_data_source.offer("STRING");
                     self.regular_data_source.offer("UTF8_STRING");
-                }
 
-                self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-                self.device.setSelection(&self.regular_data_source);
-
-                self.primary_data_source.offer(mime);
-                if (mimeTypeIsText(mime)) {
                     self.primary_data_source.offer("text/plain;charset=utf-8");
                     self.primary_data_source.offer("text/plain");
                     self.primary_data_source.offer("TEXT");
                     self.primary_data_source.offer("STRING");
                     self.primary_data_source.offer("UTF8_STRING");
+                } else {
+                    self.regular_data_source.offer(mime);
+                    self.primary_data_source.offer(mime);
                 }
+
+                self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+                self.device.setSelection(&self.regular_data_source);
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
                 self.device.setPrimarySelection(&self.primary_data_source);
@@ -399,21 +399,14 @@ fn dataControlSourceListener(data_source: *Device.DataSource, event: Device.Data
     _ = data_source;
     switch (event) {
         .send => |data| {
-            var buf: [4096]u8 = undefined;
             _ = state.tmpfile.f.seekTo(0) catch return;
 
+            var offset: i64 = 0;
             while (true) {
-                const bytes_read = posix.read(state.tmpfile.f.handle, &buf) catch |err| {
-                    std.log.err("Failed to read from temp file: {}", .{err});
-                    break;
-                };
+                const sent = os.linux.sendfile(data.fd, state.tmpfile.f.handle, &offset, 65536);
 
-                if (bytes_read == 0) break;
-
-                _ = posix.write(data.fd, buf[0..bytes_read]) catch |err| {
-                    std.log.err("Failed to write to pipe: {}", .{err});
-                    break;
-                };
+                if (sent == 0) break;
+                offset += 0;
             }
 
             posix.close(data.fd);

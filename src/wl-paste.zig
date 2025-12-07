@@ -195,7 +195,7 @@ const help_message =
 pub fn main() !void {
     const alloc = std.heap.c_allocator;
 
-    var stdout_buffer: [0x100]u8 = undefined;
+    var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 

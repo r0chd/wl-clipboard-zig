@@ -247,26 +247,10 @@ pub fn main() !void {
     verbose_enabled = cli.verbose;
     defer cli.deinit(alloc);
 
-    var stdin_data: ?[]u8 = null;
-    defer if (stdin_data) |data| alloc.free(data);
-
     const source: wlcb.Source = if (cli.data) |data|
         wlcb.Source{ .bytes = data }
-    else blk: {
-        var stdin = std.fs.File.stdin();
-        var list: std.ArrayList(u8) = .empty;
-        defer list.deinit(alloc);
-
-        var buffer: [4096]u8 = undefined;
-        while (true) {
-            const bytes_read = try stdin.read(&buffer);
-            if (bytes_read == 0) break;
-            try list.appendSlice(alloc, buffer[0..bytes_read]);
-        }
-
-        stdin_data = try list.toOwnedSlice(alloc);
-        break :blk wlcb.Source{ .bytes = stdin_data.? };
-    };
+    else
+        wlcb.Source{ .stdin = {} };
 
     var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{ .force_backend = cli.backend });
     defer wl_clipboard.deinit(alloc);
@@ -311,8 +295,7 @@ pub fn main() !void {
         }
 
         wl_clipboard.display.disconnect();
-        // GPA is not fork-safe
-        wl_clipboard = try wlcb.WlClipboard.init(std.heap.page_allocator, .{ .force_backend = cli.backend });
+        wl_clipboard = try wlcb.WlClipboard.init(alloc, .{ .force_backend = cli.backend });
         try wl_clipboard.copyToContext(close_channel.copy_context, .{
             .clipboard = if (!cli.regular and cli.primary)
                 .primary
