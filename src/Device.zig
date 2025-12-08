@@ -4,7 +4,7 @@ const mem = std.mem;
 const ext = @import("wayland").client.ext;
 const wl = @import("wayland").client.wl;
 const zwlr = @import("wayland").client.zwlr;
-const GlobalList = @import("GlobalList.zig");
+const GlobalList = @import("wayland/GlobalList.zig");
 
 pub const Backend = enum {
     ext,

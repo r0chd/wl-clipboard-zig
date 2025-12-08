@@ -82,6 +82,8 @@ pub fn build(b: *std.Build) void {
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
+    mod_tests.root_module.linkSystemLibrary("wayland-client", .{});
+    mod_tests.root_module.link_libc = true;
 
     const run_mod_tests = b.addRunArtifact(mod_tests);
 

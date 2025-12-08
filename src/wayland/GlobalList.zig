@@ -1,19 +1,20 @@
 const std = @import("std");
 const wl = @import("wayland").client.wl;
 const mem = std.mem;
+const Display = @import("Display.zig");
 
 registry: *wl.Registry,
 inner: Inner,
 
 const Self = @This();
 
-pub fn init(display: *wl.Display, alloc: mem.Allocator) !Self {
+pub fn init(display: *Display, alloc: mem.Allocator) !Self {
     const registry = try display.getRegistry();
 
     var inner = Inner{};
 
     registry.setListener(*const RegistryUserData, registryListener, &.{ .inner = &inner, .alloc = alloc });
-    if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+    try display.roundtrip();
 
     return .{ .registry = registry, .inner = inner };
 }

@@ -11,12 +11,13 @@ const os = std.os;
 const fs = std.fs;
 const MimeType = @import("MimeType.zig");
 const channel = @import("channel.zig");
-const GlobalList = @import("GlobalList.zig");
-const Seat = @import("Seat.zig");
+const GlobalList = @import("wayland/GlobalList.zig");
+const Seat = @import("wayland/Seat.zig");
 const Device = @import("Device.zig");
 const Magic = @import("Magic.zig");
 const mimeTypeIsText = @import("MimeType.zig").mimeTypeIsText;
 pub const Backend = @import("Device.zig").Backend;
+const Display = @import("wayland/Display.zig");
 
 pub const ClipboardContent = struct {
     pipe: i32,
@@ -40,9 +41,17 @@ pub const ClipboardContent = struct {
 const CopyContext = struct {
     sender: channel.broadcast(void).Sender,
     tmpfile: tmp.TmpFile,
-    display: *wl.Display,
+    display: Display,
     paste_once: bool,
     mime_type: [:0]const u8,
+
+    const Self = @This();
+
+    pub fn deinit(self: *Self, alloc: mem.Allocator) void {
+        alloc.free(self.mime_type);
+        self.sender.deinit(alloc);
+        self.tmpfile.deinit(alloc);
+    }
 };
 
 const CopySignal = struct {
@@ -54,8 +63,8 @@ const CopySignal = struct {
     const Self = @This();
 
     pub fn startDispatch(self: *Self) !void {
-        if (self.copy_context.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        self.thread = try std.Thread.spawn(.{}, dispatchWayland, .{ self.copy_context.display, &self.dispatch_receiver });
+        try self.copy_context.display.roundtrip();
+        self.thread = try std.Thread.spawn(.{}, dispatchWayland, .{ &self.copy_context.display, &self.dispatch_receiver });
     }
 
     pub fn cancelAwait(self: *Self) void {
@@ -70,8 +79,7 @@ const CopySignal = struct {
         if (self.thread) |thread| {
             thread.join();
         }
-        self.copy_context.sender.deinit(alloc);
-        self.copy_context.tmpfile.deinit(alloc);
+        self.copy_context.deinit(alloc);
         alloc.destroy(self.copy_context);
     }
 };
@@ -103,7 +111,7 @@ pub const Source = union(enum) {
 
 pub const WlClipboard = struct {
     globals: GlobalList,
-    display: *wl.Display,
+    display: Display,
     compositor: *wl.Compositor,
     seat: Seat,
     device: Device,
@@ -116,11 +124,11 @@ pub const WlClipboard = struct {
         seat_name: ?[:0]const u8 = null,
         force_backend: ?Backend = null,
     }) !Self {
-        const display = try wl.Display.connect(null);
-        const globals = try GlobalList.init(display, alloc);
+        var display = try Display.connect(null);
+        const globals = try GlobalList.init(&display, alloc);
 
         const compositor = globals.bind(wl.Compositor, wl.Compositor.generated_version).?;
-        const seat = Seat.init(display, &globals, .{ .name = opts.seat_name }) orelse return error.SeatNotFound;
+        const seat = Seat.init(&display, &globals, .{ .name = opts.seat_name }) orelse return error.SeatNotFound;
 
         var device = try Device.init(&globals, seat.wl_seat, .{ .force_backend = opts.force_backend });
         const regular_data_source = try device.createDataSource();
@@ -270,7 +278,7 @@ pub const WlClipboard = struct {
             },
         }
 
-        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        try self.display.roundtrip();
 
         return .{
             .receiver = receiver,
@@ -297,13 +305,14 @@ pub const WlClipboard = struct {
         const mime = copy_context.mime_type;
         switch (opts.clipboard) {
             .primary => {
-                self.primary_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
                     self.primary_data_source.offer("text/plain;charset=utf-8");
                     self.primary_data_source.offer("text/plain");
                     self.primary_data_source.offer("TEXT");
                     self.primary_data_source.offer("STRING");
                     self.primary_data_source.offer("UTF8_STRING");
+                } else {
+                    self.primary_data_source.offer(mime);
                 }
 
                 self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
@@ -311,13 +320,14 @@ pub const WlClipboard = struct {
                 self.device.setPrimarySelection(&self.primary_data_source);
             },
             .regular => {
-                self.regular_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
                     self.regular_data_source.offer("text/plain;charset=utf-8");
                     self.regular_data_source.offer("text/plain");
                     self.regular_data_source.offer("TEXT");
                     self.regular_data_source.offer("STRING");
                     self.regular_data_source.offer("UTF8_STRING");
+                } else {
+                    self.regular_data_source.offer(mime);
                 }
 
                 self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
@@ -325,35 +335,32 @@ pub const WlClipboard = struct {
                 self.device.setSelection(&self.regular_data_source);
             },
             .both => {
-                self.regular_data_source.offer(mime);
                 if (mimeTypeIsText(mime)) {
                     self.regular_data_source.offer("text/plain;charset=utf-8");
                     self.regular_data_source.offer("text/plain");
                     self.regular_data_source.offer("TEXT");
                     self.regular_data_source.offer("STRING");
                     self.regular_data_source.offer("UTF8_STRING");
-                }
 
-                self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
-
-                self.device.setSelection(&self.regular_data_source);
-
-                self.primary_data_source.offer(mime);
-                if (mimeTypeIsText(mime)) {
                     self.primary_data_source.offer("text/plain;charset=utf-8");
                     self.primary_data_source.offer("text/plain");
                     self.primary_data_source.offer("TEXT");
                     self.primary_data_source.offer("STRING");
                     self.primary_data_source.offer("UTF8_STRING");
+                } else {
+                    self.regular_data_source.offer(mime);
+                    self.primary_data_source.offer(mime);
                 }
 
-                self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+                self.regular_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
+                self.device.setSelection(&self.regular_data_source);
 
+                self.primary_data_source.setListener(*CopyContext, dataControlSourceListener, copy_context);
                 self.device.setPrimarySelection(&self.primary_data_source);
             },
         }
 
-        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        try self.display.roundtrip();
     }
 
     pub fn paste(
@@ -372,7 +379,7 @@ pub const WlClipboard = struct {
 
         self.device.setListener(*PasteContext, deviceListener, &paste_context);
 
-        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        try self.display.roundtrip();
 
         const offer = paste_context.selected_offer orelse return error.NoClipboardContent;
 
@@ -382,7 +389,7 @@ pub const WlClipboard = struct {
         const pipefd = try posix.pipe();
         offer.receive(infered_mime_type, pipefd[1]);
 
-        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
+        try self.display.flush();
 
         posix.close(pipefd[1]);
 
@@ -457,8 +464,24 @@ fn dataControlOfferListener(data_offer: *Device.DataOffer, event: Device.DataOff
     }
 }
 
-fn dispatchWayland(display: *wl.Display, receiver: *channel.broadcast(void).Receiver) void {
+fn dispatchWayland(display: *Display, receiver: *channel.broadcast(void).Receiver) void {
     while (receiver.tryReceive() == null) {
-        if (display.dispatch() != .SUCCESS) return;
+        display.dispatch() catch continue;
     }
+}
+
+test "copy" {
+    const alloc = std.testing.allocator;
+
+    var wl_clipboard = try WlClipboard.init(alloc, .{});
+    defer wl_clipboard.deinit(alloc);
+
+    var signal = try wl_clipboard.copy(alloc, .{ .bytes = "test" }, .{});
+    defer signal.deinit(alloc);
+    try signal.startDispatch();
+
+    var res = try wl_clipboard.paste(alloc, .{});
+    res.deinit(alloc);
+
+    signal.copy_context.sender.send({});
 }

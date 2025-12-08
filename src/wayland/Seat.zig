@@ -2,12 +2,13 @@ const std = @import("std");
 const mem = std.mem;
 const wl = @import("wayland").client.wl;
 const GlobalList = @import("GlobalList.zig");
+const Display = @import("Display.zig");
 
 wl_seat: *wl.Seat,
 
 const Self = @This();
 
-pub fn init(display: *wl.Display, globals: *const GlobalList, options: struct { name: ?[:0]const u8 }) ?Self {
+pub fn init(display: *Display, globals: *const GlobalList, options: struct { name: ?[:0]const u8 }) ?Self {
     const seat_global = globals.bind(wl.Seat, wl.Seat.generated_version).?;
 
     if (options.name == null) {
@@ -19,7 +20,7 @@ pub fn init(display: *wl.Display, globals: *const GlobalList, options: struct { 
     var cb_state = CbState{ .name = options.name };
     seat_global.setListener(*CbState, seatListener, &cb_state);
 
-    if (display.roundtrip() != .SUCCESS) return null;
+    display.roundtrip() catch return null;
 
     if (cb_state.wl_seat) |wl_seat| {
         return .{
