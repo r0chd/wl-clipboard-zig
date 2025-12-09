@@ -2,7 +2,7 @@
     .name = .wl_clipboard,
     .version = "0.1.0",
     .fingerprint = 0x5004a7168d98f47d,
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .wayland = .{
             .url = "git+https://codeberg.org/ifreund/zig-wayland.git#42a9edb1df8efd57cae0d05121ffa94d3df147c2",

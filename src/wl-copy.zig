@@ -247,6 +247,15 @@ pub fn main() !void {
     verbose_enabled = cli.verbose;
     defer cli.deinit(alloc);
 
+    // Read stdin before forking if we need to use it
+    var stdin_data: ?[]u8 = null;
+    defer if (stdin_data) |data| alloc.free(data);
+
+    if (cli.data == null and !cli.clear and !cli.foreground) {
+        var stdin_file = fs.File.stdin();
+        stdin_data = try stdin_file.readToEndAlloc(alloc, std.math.maxInt(usize));
+    }
+
     if (!cli.foreground and !cli.clear) {
         if (fs.openFileAbsolute("/dev/null", .{ .mode = .read_write })) |dev_null| {
             _ = os.linux.dup2(dev_null.handle, posix.STDIN_FILENO);
@@ -299,6 +308,8 @@ pub fn main() !void {
     var close_channel = try wl_clipboard.copy(
         alloc,
         if (cli.data) |data|
+            .{ .bytes = data }
+        else if (stdin_data) |data|
             .{ .bytes = data }
         else
             .{ .stdin = {} },

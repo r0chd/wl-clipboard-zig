@@ -22,17 +22,19 @@ pub fn build(b: *std.Build) void {
     const mod = b.addModule("wl_clipboard", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .link_libc = true,
     });
 
     mod.linkSystemLibrary("magic", .{});
-    mod.link_libc = true;
     mod.addImport("mime", mime.module("mime"));
     mod.addImport("wayland", wayland);
+    mod.linkSystemLibrary("wayland-client", .{});
 
     const wl_copy = b.addExecutable(.{
         .name = "wl-copy",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/wl-copy.zig"),
+            .link_libc = true,
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -41,7 +43,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     wl_copy.linkSystemLibrary("magic");
-    wl_copy.linkLibC();
     wl_copy.linkSystemLibrary("wayland-client");
     b.installArtifact(wl_copy);
 
@@ -49,6 +50,7 @@ pub fn build(b: *std.Build) void {
         .name = "wl-paste",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/wl-paste.zig"),
+            .link_libc = true,
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -57,7 +59,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     wl_paste.linkSystemLibrary("magic");
-    wl_paste.linkLibC();
     wl_paste.linkSystemLibrary("wayland-client");
     b.installArtifact(wl_paste);
 
@@ -82,8 +83,6 @@ pub fn build(b: *std.Build) void {
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
-    mod_tests.root_module.linkSystemLibrary("wayland-client", .{});
-    mod_tests.root_module.link_libc = true;
 
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
