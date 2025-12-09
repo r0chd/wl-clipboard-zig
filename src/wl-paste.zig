@@ -44,6 +44,8 @@ const Arguments = enum {
     @"-t",
     @"--backend",
     @"-b",
+    @"--watch",
+    @"-w",
 };
 
 const Cli = struct {
@@ -54,10 +56,11 @@ const Cli = struct {
     list_types: bool = false,
     primary: bool = false,
     backend: ?wlcb.Backend = null,
+    watch: ?[][:0]const u8 = null,
 
     const Self = @This();
 
-    fn init() Self {
+    fn init(alloc: mem.Allocator) !Self {
         var self = Cli{};
 
         var args = std.process.args();
@@ -92,6 +95,14 @@ const Cli = struct {
                 },
                 .@"--primary", .@"-p" => {
                     self.primary = true;
+                },
+                .@"--watch", .@"-w" => {
+                    var command: std.ArrayList([:0]const u8) = .empty;
+                    while (args.next()) |str| {
+                        try command.append(alloc, str);
+                    }
+
+                    self.watch = try command.toOwnedSlice(alloc);
                 },
                 .@"--seat", .@"-s" => {
                     if (args.next()) |flag_arg| {
@@ -181,6 +192,9 @@ const help_message =
     \\
     \\          [env: WL_CLIPBOARD_BACKEND=]
     \\
+    \\  -w, --watch <STRING>
+    \\          Run a command each time the selection changes
+    \\
     \\  -v, --verbose
     \\          Enable verbose logging
     \\
@@ -192,6 +206,67 @@ const help_message =
     \\
 ;
 
+const CallbackData = struct { command: [][:0]const u8, alloc: mem.Allocator, clipboard: enum { primary, regular } };
+
+fn clipboardCallback(event: wlcb.Event, data: *CallbackData) void {
+    var read_buf: [4096]u8 = undefined;
+    var wrote_anything = false;
+
+    var data_buf: [4096 * 16]u8 = undefined;
+    var data_len: usize = 0;
+
+    switch (event) {
+        .primary_selection => |pipe| {
+            if (data.clipboard == .primary) {
+                while (true) {
+                    const bytes_read = posix.read(pipe, &read_buf) catch |err| switch (err) {
+                        error.WouldBlock => continue,
+                        else => return,
+                    };
+
+                    if (bytes_read == 0) break;
+                    wrote_anything = true;
+
+                    if (data_len + bytes_read <= data_buf.len) {
+                        @memcpy(data_buf[data_len .. data_len + bytes_read], read_buf[0..bytes_read]);
+                        data_len += bytes_read;
+                    }
+                }
+            }
+        },
+        .selection => |pipe| {
+            if (data.clipboard == .regular) {
+                while (true) {
+                    const bytes_read = posix.read(pipe, &read_buf) catch |err| switch (err) {
+                        error.WouldBlock => continue,
+                        else => return,
+                    };
+
+                    if (bytes_read == 0) break;
+                    wrote_anything = true;
+
+                    if (data_len + bytes_read <= data_buf.len) {
+                        @memcpy(data_buf[data_len .. data_len + bytes_read], read_buf[0..bytes_read]);
+                        data_len += bytes_read;
+                    }
+                }
+            }
+        },
+    }
+
+    if (wrote_anything) {
+        var child = std.process.Child.init(data.command, data.alloc);
+        child.stdin_behavior = .Pipe;
+
+        child.spawn() catch return;
+        child.stdin.?.writeAll(data_buf[0..data_len]) catch return;
+        child.stdin.?.close();
+        child.stdin = null;
+
+        _ = child.wait() catch return;
+    }
+}
+
 pub fn main() !void {
     const alloc = std.heap.c_allocator;
 
@@ -199,11 +274,20 @@ pub fn main() !void {
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    const cli = Cli.init();
+    const cli = try Cli.init(alloc);
     verbose_enabled = cli.verbose;
 
     var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{});
     defer wl_clipboard.deinit(alloc);
+
+    if (cli.watch) |command| {
+        var callback_data = CallbackData{
+            .command = command,
+            .alloc = alloc,
+            .clipboard = if (cli.primary) .primary else .regular,
+        };
+        try wl_clipboard.watchClipboard(alloc, *CallbackData, clipboardCallback, &callback_data);
+    }
 
     var clipboard_content = try wl_clipboard.paste(alloc, .{ .mime_type = cli.type, .primary = cli.primary });
     defer clipboard_content.deinit(alloc);

@@ -85,8 +85,7 @@ const CopySignal = struct {
 };
 
 const PasteContext = struct {
-    current_offer: ?*Device.DataOffer = null,
-    selected_offer: ?*Device.DataOffer = null,
+    offer: ?*Device.DataOffer = null,
     mime_types: std.ArrayList([:0]const u8) = .empty,
     alloc: mem.Allocator,
     primary: bool,
@@ -94,14 +93,23 @@ const PasteContext = struct {
     const Self = @This();
 
     fn deinit(self: *Self) void {
-        if (self.selected_offer) |offer| {
+        if (self.offer) |offer| {
             offer.deinit();
-            self.selected_offer = null;
+            self.offer = null;
         }
         self.mime_types.clearRetainingCapacity();
         self.primary = false;
         self.alloc = undefined;
     }
+};
+
+const WatchContext = struct {
+    offer: ?*Device.DataOffer = null,
+    alloc: mem.Allocator,
+    callback: *const fn (Event, *anyopaque) void,
+    data: *anyopaque,
+    mime_types: std.ArrayList([:0]const u8) = .empty,
+    display: Display,
 };
 
 pub const Source = union(enum) {
@@ -381,7 +389,7 @@ pub const WlClipboard = struct {
 
         try self.display.roundtrip();
 
-        const offer = paste_context.selected_offer orelse return error.NoClipboardContent;
+        const offer = paste_context.offer orelse return error.NoClipboardContent;
 
         var mime_type = MimeType.init(paste_context.mime_types.items);
         const infered_mime_type = try mime_type.infer(opts.mime_type);
@@ -397,6 +405,27 @@ pub const WlClipboard = struct {
             .pipe = pipefd[0],
             .mime_types = paste_context.mime_types,
         };
+    }
+
+    pub fn watchClipboard(
+        self: *Self,
+        alloc: mem.Allocator,
+        comptime T: type,
+        callback: *const fn (Event, T) void,
+        data: T,
+    ) !void {
+        var watch_context = WatchContext{
+            .alloc = alloc,
+            .callback = @ptrCast(callback),
+            .data = @ptrCast(data),
+            .display = self.display,
+        };
+
+        self.device.setListener(*WatchContext, deviceListenerWatch, &watch_context);
+
+        while (true) {
+            try self.display.dispatch();
+        }
     }
 };
 
@@ -436,17 +465,73 @@ fn deviceListener(device: *Device, event: Device.DeviceEvent, state: *PasteConte
 
     switch (event) {
         .data_offer => |offer| {
-            state.current_offer = offer;
             offer.setListener(*PasteContext, dataControlOfferListener, state);
         },
         .primary_selection => |offer| {
             if (state.primary) {
-                state.selected_offer = offer;
+                state.offer = offer;
             }
         },
         .selection => |offer| {
             if (!state.primary) {
-                state.selected_offer = offer;
+                state.offer = offer;
+            }
+        },
+        .finished => {},
+    }
+}
+
+pub const Event = union(enum) {
+    primary_selection: i32,
+    selection: i32,
+};
+
+fn dataControlOfferListenerWatch(data_offer: *Device.DataOffer, event: Device.DataOffer.Event, state: *WatchContext) void {
+    _ = data_offer;
+
+    switch (event) {
+        .offer => |mime_type| {
+            const mime_type_copy = state.alloc.dupeZ(u8, mime_type) catch return;
+            state.mime_types.append(state.alloc, mime_type_copy) catch return;
+        },
+    }
+}
+
+fn deviceListenerWatch(device: *Device, event: Device.DeviceEvent, state: *WatchContext) void {
+    _ = device;
+
+    switch (event) {
+        .data_offer => |offer| {
+            offer.setListener(*WatchContext, dataControlOfferListenerWatch, state);
+        },
+        .primary_selection => |offer| {
+            if (offer) |o| {
+                var mime_type = MimeType.init(state.mime_types.items);
+                const infered_mime_type = mime_type.infer(null) catch return;
+
+                const pipefd = posix.pipe() catch return;
+                o.receive(infered_mime_type, pipefd[1]);
+
+                state.display.flush() catch return;
+
+                posix.close(pipefd[1]);
+
+                state.callback(.{ .primary_selection = pipefd[0] }, state.data);
+            }
+        },
+        .selection => |offer| {
+            if (offer) |o| {
+                var mime_type = MimeType.init(state.mime_types.items);
+                const infered_mime_type = mime_type.infer(null) catch return;
+
+                const pipefd = posix.pipe() catch return;
+                o.receive(infered_mime_type, pipefd[1]);
+
+                state.display.flush() catch return;
+
+                posix.close(pipefd[1]);
+
+                state.callback(.{ .selection = pipefd[0] }, state.data);
             }
         },
         .finished => {},
