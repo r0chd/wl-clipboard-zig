@@ -240,6 +240,23 @@ const help_message =
     \\          Print version
 ;
 
+fn mimeTypeIsText(mime_type: []const u8) bool {
+    const basic = mem.startsWith(u8, mime_type, "text/") or
+        mem.eql(u8, mime_type, "TEXT") or
+        mem.eql(u8, mime_type, "STRING") or
+        mem.eql(u8, mime_type, "UTF8_STRING");
+    const common = mem.containsAtLeast(u8, mime_type, 1, "json") or
+        mem.endsWith(u8, mime_type, "script") or
+        mem.endsWith(u8, mime_type, "xml") or
+        mem.endsWith(u8, mime_type, "yaml") or
+        mem.endsWith(u8, mime_type, "csv") or
+        mem.endsWith(u8, mime_type, "ini");
+    const special = mem.containsAtLeast(u8, mime_type, 1, "application/vnd.ms-publisher") or
+        mem.endsWith(u8, mime_type, "pgp-keys");
+
+    return basic or common or special;
+}
+
 pub fn main() !void {
     const alloc = std.heap.c_allocator;
 
@@ -251,20 +268,6 @@ pub fn main() !void {
         wlcb.Source{ .bytes = data }
     else
         wlcb.Source{ .stdin = {} };
-
-    var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{ .force_backend = cli.backend });
-    defer wl_clipboard.deinit(alloc);
-
-    var close_channel = try wl_clipboard.copy(alloc, source, .{
-        .clipboard = if (!cli.regular and cli.primary)
-            .primary
-        else if ((cli.regular and !cli.primary) or (!cli.regular and !cli.primary))
-            .regular
-        else
-            .both,
-        .mime_type = cli.type,
-    });
-    defer close_channel.deinit(alloc);
 
     if (!cli.foreground) {
         if (fs.openFileAbsolute("/dev/null", .{ .mode = .read_write })) |dev_null| {
@@ -293,26 +296,20 @@ pub fn main() !void {
         } else if (pid > 0) {
             posix.exit(0);
         }
-
-        wl_clipboard.display.disconnect();
-        wl_clipboard = try wlcb.WlClipboard.init(alloc, .{ .force_backend = cli.backend });
-        try wl_clipboard.copyToContext(close_channel.copy_context, .{
-            .clipboard = if (!cli.regular and cli.primary)
-                .primary
-            else if ((cli.regular and !cli.primary) or (!cli.regular and !cli.primary))
-                .regular
-            else
-                .both,
-        });
-
-        try close_channel.startDispatch();
-        close_channel.cancelAwait();
-
-        // Exit without running defers (they'd free with wrong allocator)
-        posix.exit(0);
     }
 
-    try close_channel.startDispatch();
+    var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{ .force_backend = cli.backend });
+    defer wl_clipboard.deinit(alloc);
+
+    var close_channel = try wl_clipboard.copy(alloc, source, .{
+        .clipboard = if (!cli.regular and cli.primary)
+            .primary
+        else if ((cli.regular and !cli.primary) or (!cli.regular and !cli.primary))
+            .regular
+        else
+            .both,
+        .mime_type = cli.type,
+    });
 
     close_channel.cancelAwait();
 }
