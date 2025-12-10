@@ -305,7 +305,7 @@ pub fn main() !void {
         return;
     }
 
-    var close_channel = try wl_clipboard.copy(
+    var signal = try wl_clipboard.copy(
         alloc,
         if (cli.data) |data|
             .{ .bytes = data }
@@ -324,5 +324,7 @@ pub fn main() !void {
         },
     );
 
-    close_channel.cancelAwait();
+    try wl_clipboard.dispatchLoop(alloc, .threaded);
+
+    signal.cancelAwait();
 }

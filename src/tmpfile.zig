@@ -46,7 +46,7 @@ pub const TmpDir = struct {
     /// cleanup will only clean the dir (deleting everything in it), but not release resources
     pub fn cleanup(self: *TmpDir) void {
         self.dir.close();
-        self.parent_dir.deleteTree(self.sub_path) catch std.debug.panic("Failed to remove {} directory, directory not empty", .{self.abs_path});
+        self.parent_dir.deleteTree(self.sub_path) catch std.debug.panic("Failed to remove {s} directory, directory not empty", .{self.abs_path});
         self.parent_dir.close();
     }
 

@@ -285,7 +285,8 @@ pub fn main() !void {
             .alloc = alloc,
             .clipboard = if (cli.primary) .primary else .regular,
         };
-        try wl_clipboard.watchClipboard(alloc, *CallbackData, clipboardCallback, &callback_data);
+        try wl_clipboard.watch(alloc, *CallbackData, clipboardCallback, &callback_data);
+        try wl_clipboard.dispatchLoop(alloc, .blocking);
     }
 
     var clipboard_content = try wl_clipboard.paste(alloc, .{ .mime_type = cli.type, .primary = cli.primary });
