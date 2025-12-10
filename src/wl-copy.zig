@@ -312,7 +312,7 @@ pub fn main() !void {
         else if (stdin_data) |data|
             .{ .bytes = data }
         else
-            .{ .stdin = {} },
+            .{ .file = std.fs.File.stdin() },
         .{
             .clipboard = if (!cli.regular and cli.primary)
                 .primary

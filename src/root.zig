@@ -4,13 +4,14 @@ const tmp = @import("tmpfile.zig");
 const mem = std.mem;
 const posix = std.posix;
 const os = std.os;
-const MimeType = @import("MimeType.zig");
+const fs = std.fs;
 const channel = @import("channel.zig");
+const mimeTypeIsText = @import("MimeType.zig").mimeTypeIsText;
+const MimeType = @import("MimeType.zig");
 const GlobalList = @import("wayland/GlobalList.zig");
 const Seat = @import("wayland/Seat.zig");
 const Device = @import("Device.zig");
 const Magic = @import("Magic.zig");
-const mimeTypeIsText = @import("MimeType.zig").mimeTypeIsText;
 pub const Backend = @import("Device.zig").Backend;
 const Display = @import("wayland/Display.zig");
 
@@ -92,7 +93,7 @@ const WatchContext = struct {
 };
 
 pub const Source = union(enum) {
-    stdin: void,
+    file: fs.File,
     bytes: []const u8,
 };
 
@@ -169,9 +170,8 @@ pub const WlClipboard = struct {
         var output_writer = tmpfile.f.writer(&output_buffer);
 
         switch (source) {
-            .stdin => {
-                var stdin = std.fs.File.stdin();
-                var reader = stdin.readerStreaming(&.{});
+            .file => |file| {
+                var reader = file.readerStreaming(&.{});
 
                 _ = try output_writer.interface.sendFileAll(&reader, .unlimited);
             },
