@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const helpers = @import("helpers");
 const wlcb = @import("wl_clipboard");
 const mem = std.mem;
 const meta = std.meta;

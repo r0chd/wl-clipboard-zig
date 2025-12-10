@@ -128,6 +128,7 @@ pub const DataSource = struct {
                 };
 
                 const Static = struct {
+                    // SAFETY: we set it one line below
                     var context: Context = undefined;
                 };
                 Static.context = .{
@@ -159,6 +160,7 @@ pub const DataSource = struct {
                 };
 
                 const Static = struct {
+                    // SAFETY: we set it one line below
                     var context: Context = undefined;
                 };
                 Static.context = .{
@@ -241,6 +243,7 @@ pub const DataOffer = struct {
                 };
 
                 const Static = struct {
+                    // SAFETY: we set it one line below
                     var context: Context = undefined;
                 };
                 Static.context = .{
@@ -268,6 +271,7 @@ pub const DataOffer = struct {
                 };
 
                 const Static = struct {
+                    // SAFETY: we set it one line below
                     var context: Context = undefined;
                 };
                 Static.context = .{
@@ -346,6 +350,7 @@ pub fn setListener(self: *Self, comptime T: type, listener: *const fn (*Self, De
             };
 
             const Static = struct {
+                // SAFETY: we set it one line below
                 var context: Context = undefined;
             };
             Static.context = .{
@@ -403,6 +408,7 @@ pub fn setListener(self: *Self, comptime T: type, listener: *const fn (*Self, De
             };
 
             const Static = struct {
+                // SAFETY: we set it one line below
                 var context: Context = undefined;
             };
             Static.context = .{

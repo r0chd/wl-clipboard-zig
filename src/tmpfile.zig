@@ -1,10 +1,6 @@
 /// a small zig lib for creating and using sys temp files
 const std = @import("std");
 const mem = std.mem;
-const fs = std.fs;
-const builtin = @import("builtin");
-const testing = std.testing;
-const ThisModule = @This();
 
 const random_bytes_count = 12;
 const random_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
@@ -45,25 +41,20 @@ pub const TmpDir = struct {
     pub fn deinit(self: *TmpDir, alloc: mem.Allocator) void {
         self.cleanup();
         alloc.free(self.abs_path);
-        self.abs_path = undefined;
-        self.parent_dir_path = undefined;
-        self.sub_path = undefined;
     }
 
     /// cleanup will only clean the dir (deleting everything in it), but not release resources
     pub fn cleanup(self: *TmpDir) void {
         self.dir.close();
-        self.dir = undefined;
-        self.parent_dir.deleteTree(self.sub_path) catch {};
+        self.parent_dir.deleteTree(self.sub_path) catch std.debug.panic("Failed to remove {} directory, directory not empty", .{self.abs_path});
         self.parent_dir.close();
-        self.parent_dir = undefined;
     }
 
     /// return a TmpDir created in system tmp folder
     pub fn init(alloc: mem.Allocator, args: TmpDirArgs) !TmpDir {
-        var random_bytes: [ThisModule.random_bytes_count]u8 = undefined;
+        var random_bytes: [random_bytes_count]u8 = undefined;
         std.crypto.random.bytes(&random_bytes);
-        var random_path: [ThisModule.random_path_len]u8 = undefined;
+        var random_path: [random_path_len]u8 = undefined;
         _ = std.fs.base64_encoder.encode(&random_path, &random_bytes);
 
         const sys_tmp_dir_path = try getSysTmpDir(alloc);
@@ -122,20 +113,15 @@ pub const TmpFile = struct {
     pub fn deinit(self: *TmpFile, alloc: mem.Allocator) void {
         defer {
             self.tmp_dir.deinit(alloc);
-            self.tmp_dir = undefined;
         }
         self.close();
         alloc.free(self.abs_path);
-        self.abs_path = undefined;
-        self.dir_path = undefined;
-        self.sub_path = undefined;
     }
 
     /// This method only close file handles, will not release the path resources
     pub fn close(self: *TmpFile) void {
         if (!self.fclosed) {
             self.f.close();
-            self.f = undefined;
             self.fclosed = true;
         }
     }
@@ -145,9 +131,9 @@ pub const TmpFile = struct {
     pub fn init(alloc: mem.Allocator, args: TmpFileArgs) !TmpFile {
         const tmp_dir = try TmpDir.init(alloc, .{ .opts = .{} });
 
-        var random_bytes: [ThisModule.random_bytes_count]u8 = undefined;
+        var random_bytes: [random_bytes_count]u8 = undefined;
         std.crypto.random.bytes(&random_bytes);
-        var random_path: [ThisModule.random_path_len]u8 = undefined;
+        var random_path: [random_path_len]u8 = undefined;
         _ = std.fs.base64_encoder.encode(&random_path, &random_bytes);
 
         const abs_path = brk: {

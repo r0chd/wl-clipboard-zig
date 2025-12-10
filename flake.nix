@@ -44,6 +44,7 @@
               nixfmt-rfc-style
               valgrind
               file
+              zig-zlint
               ;
           };
         };

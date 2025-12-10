@@ -2,7 +2,6 @@ const std = @import("std");
 const mime = @import("mime");
 const mem = std.mem;
 const ascii = std.ascii;
-const fs = std.fs;
 const posix = std.posix;
 
 available_mime_types: [][:0]const u8,
