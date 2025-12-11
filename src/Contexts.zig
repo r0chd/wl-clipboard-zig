@@ -10,42 +10,37 @@ const Device = @import("Device.zig");
 const Event = @import("root.zig").Event;
 const broadcast = @import("channel.zig").broadcast;
 
-copy: *CopyContext,
-watch: *WatchContext,
+copy: CopyContext,
+watch: WatchContext,
 
 const Self = @This();
 
 pub fn init(alloc: mem.Allocator, display: Display, sender: broadcast(void).Sender) !Self {
-    const copy = try alloc.create(CopyContext);
-    copy.* = .{
-        .display = display,
-        .sender = sender,
-        .tmpfile = try tmp.TmpFile.init(alloc, .{
-            .prefix = null,
-            .dir_prefix = null,
-            .flags = .{ .read = true, .mode = 0o400 },
-            .dir_opts = .{},
-        }),
+    return .{
+        .copy = .{
+            .display = display,
+            .sender = sender,
+            .tmpfile = try tmp.TmpFile.init(alloc, .{
+                .prefix = null,
+                .dir_prefix = null,
+                .flags = .{ .read = true, .mode = 0o400 },
+                .dir_opts = .{},
+            }),
+        },
+        .watch = .{
+            .offer = null,
+            .alloc = alloc,
+            .callback = undefined,
+            .data = undefined,
+            .mime_types = .empty,
+            .display = display,
+        },
     };
-
-    const watch = try alloc.create(WatchContext);
-    watch.* = .{
-        .offer = null,
-        .alloc = alloc,
-        .callback = undefined,
-        .data = undefined,
-        .mime_types = .empty,
-        .display = display,
-    };
-
-    return .{ .copy = copy, .watch = watch };
 }
 
 pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.copy.deinit(alloc);
-    alloc.destroy(self.copy);
     self.watch.mime_types.deinit(alloc);
-    alloc.destroy(self.watch);
 }
 
 pub const CopyContext = struct {

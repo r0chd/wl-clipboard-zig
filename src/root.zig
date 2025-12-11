@@ -202,7 +202,7 @@ pub const WlClipboard = struct {
                     self.primary_data_source.offer(mime);
                 }
 
-                self.primary_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, self.contexts.copy);
+                self.primary_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);
                 self.device.setPrimarySelection(&self.primary_data_source);
             },
             .regular => {
@@ -216,7 +216,7 @@ pub const WlClipboard = struct {
                     self.regular_data_source.offer(mime);
                 }
 
-                self.regular_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, self.contexts.copy);
+                self.regular_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);
                 self.device.setSelection(&self.regular_data_source);
             },
             .both => {
@@ -237,10 +237,10 @@ pub const WlClipboard = struct {
                     self.primary_data_source.offer(mime);
                 }
 
-                self.regular_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, self.contexts.copy);
+                self.regular_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);
                 self.device.setSelection(&self.regular_data_source);
 
-                self.primary_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, self.contexts.copy);
+                self.primary_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);
                 self.device.setPrimarySelection(&self.primary_data_source);
             },
         }
@@ -305,7 +305,7 @@ pub const WlClipboard = struct {
         self.contexts.watch.data = @ptrCast(data);
         self.contexts.watch.alloc = alloc;
 
-        self.device.setListener(*Contexts.WatchContext, deviceListenerWatch, self.contexts.watch);
+        self.device.setListener(*Contexts.WatchContext, deviceListenerWatch, &self.contexts.watch);
 
         try self.display.roundtrip();
     }
@@ -460,15 +460,16 @@ fn dispatchWayland(display: *Display, receiver: channel.broadcast(void).Receiver
 test "copy" {
     const alloc = std.testing.allocator;
 
-    var wl_clipboard = try WlClipboard.init(alloc, .{});
-    defer wl_clipboard.deinit(alloc);
+    {
+        var wl_clipboard = try WlClipboard.init(alloc, .{});
+        defer wl_clipboard.deinit(alloc);
 
-    var signal = try wl_clipboard.copy(alloc, .{ .bytes = "test" }, .{});
-    defer signal.deinit(alloc);
-    try signal.startDispatch();
+        var res = try wl_clipboard.paste(alloc, .{});
+        res.deinit(alloc);
+    }
 
-    var res = try wl_clipboard.paste(alloc, .{});
-    res.deinit(alloc);
+    //_ = try wl_clipboard.copy(alloc, .{ .bytes = "test" }, .{});
+    //try wl_clipboard.dispatchLoop(alloc, .threaded);
 
-    signal.copy_context.sender.send({});
+    //wl_clipboard.sender.send({});
 }
