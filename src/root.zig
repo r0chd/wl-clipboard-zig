@@ -154,6 +154,7 @@ pub const WlClipboard = struct {
 
         var tmpfile = &self.contexts.copy.tmpfile;
         try tmpfile.f.seekTo(0);
+        try tmpfile.f.setEndPos(0);
         var output_writer = tmpfile.f.writer(&output_buffer);
 
         switch (source) {
@@ -338,7 +339,7 @@ fn dataControlSourceListener(data_source: *Device.DataSource, event: Device.Data
                 const sent = os.linux.sendfile(data.fd, state.tmpfile.f.handle, &offset, 65536);
 
                 if (sent == 0) break;
-                offset += 0;
+                offset += @intCast(sent);
             }
 
             posix.close(data.fd);
