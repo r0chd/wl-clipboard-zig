@@ -1,6 +1,7 @@
 // Preallocated contexts that are free'd once at the end of the program to avoid unnecessary
 // memory allocations and free's everytime WlClipboard.copy or WlClipboard.watch is called
 
+const atomic = std.atomic;
 const std = @import("std");
 const mem = std.mem;
 const channel = @import("channel.zig");
@@ -8,23 +9,18 @@ const tmp = @import("tmpfile.zig");
 const Display = @import("wayland/Display.zig");
 const Device = @import("Device.zig");
 const Event = @import("root.zig").Event;
-const broadcast = @import("channel.zig").broadcast;
 
 copy: CopyContext,
 watch: WatchContext,
 
 const Self = @This();
 
-pub fn init(alloc: mem.Allocator, display: Display, sender: broadcast(void).Sender) !Self {
+pub fn init(alloc: mem.Allocator, display: Display) !Self {
     return .{
         .copy = .{
             .display = display,
-            .sender = sender,
             .tmpfile = try tmp.TmpFile.init(alloc, .{
-                .prefix = null,
-                .dir_prefix = null,
                 .flags = .{ .read = true, .mode = 0o400 },
-                .dir_opts = .{},
             }),
         },
         .watch = .{
@@ -38,13 +34,17 @@ pub fn init(alloc: mem.Allocator, display: Display, sender: broadcast(void).Send
     };
 }
 
+pub fn fixStopPointer(self: *Self, stop: *bool) void {
+    self.copy.stop = stop;
+}
+
 pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.copy.deinit(alloc);
     self.watch.mime_types.deinit(alloc);
 }
 
 pub const CopyContext = struct {
-    sender: channel.broadcast(void).Sender,
+    stop: bool = false,
     tmpfile: tmp.TmpFile,
     display: Display,
     paste_once: bool = false,

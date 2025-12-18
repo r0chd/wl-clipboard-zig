@@ -4,6 +4,7 @@ const tmp = @import("tmpfile.zig");
 const mem = std.mem;
 const posix = std.posix;
 const os = std.os;
+const atomic = std.atomic;
 const fs = std.fs;
 const channel = @import("channel.zig");
 const mimeTypeIsText = @import("MimeType.zig").mimeTypeIsText;
@@ -32,20 +33,6 @@ const ClipboardContent = struct {
             alloc.free(mime_type);
         }
         self.mime_types.deinit(alloc);
-    }
-};
-
-const CopySignal = struct {
-    receiver: channel.broadcast(void).Receiver,
-
-    const Self = @This();
-
-    pub fn cancelAwait(self: *Self) void {
-        self.receiver.receive();
-    }
-
-    pub fn cancelled(self: *Self) bool {
-        return self.receiver.tryReceive() != null;
     }
 };
 
@@ -86,9 +73,8 @@ pub const WlClipboard = struct {
     device: Device,
     regular_data_source: Device.DataSource,
     primary_data_source: Device.DataSource,
-    dispatch_thread: ?std.Thread = null,
-    sender: channel.broadcast(void).Sender,
     contexts: Contexts,
+    stop: bool = false,
 
     const Self = @This();
 
@@ -106,8 +92,6 @@ pub const WlClipboard = struct {
         const regular_data_source = try device.createDataSource();
         const primary_data_source = try device.createDataSource();
 
-        var sender, _ = try channel.broadcast(void).init(alloc);
-
         return .{
             .display = display,
             .compositor = compositor,
@@ -116,16 +100,11 @@ pub const WlClipboard = struct {
             .globals = globals,
             .regular_data_source = regular_data_source,
             .primary_data_source = primary_data_source,
-            .sender = sender,
-            .contexts = try Contexts.init(alloc, display, sender.clone()),
+            .contexts = try Contexts.init(alloc, display),
         };
     }
 
     pub fn deinit(self: *Self, alloc: mem.Allocator) void {
-        if (self.dispatch_thread) |thread| {
-            thread.join();
-        }
-        self.sender.deinit(alloc);
         self.regular_data_source.deinit();
         self.primary_data_source.deinit();
         self.device.deinit();
@@ -149,7 +128,7 @@ pub const WlClipboard = struct {
             paste_once: bool = false,
             mime_type: ?[:0]const u8 = null,
         },
-    ) !CopySignal {
+    ) !void {
         var output_buffer: [4096]u8 = undefined;
 
         var tmpfile = &self.contexts.copy.tmpfile;
@@ -248,9 +227,9 @@ pub const WlClipboard = struct {
 
         try self.display.roundtrip();
 
-        return .{
-            .receiver = try self.sender.receiver(alloc),
-        };
+        while (!self.contexts.copy.stop) {
+            try self.display.dispatch();
+        }
     }
 
     pub fn paste(
@@ -308,20 +287,8 @@ pub const WlClipboard = struct {
 
         self.device.setListener(*Contexts.WatchContext, deviceListenerWatch, &self.contexts.watch);
 
-        try self.display.roundtrip();
-    }
-
-    pub fn dispatchLoop(self: *Self, alloc: mem.Allocator, variant: enum { blocking, threaded }) !void {
-        if (variant == .threaded) {
-            assert(self.dispatch_thread == null);
-
-            const dispatch_receiver = try self.sender.receiver(alloc);
-            self.dispatch_thread = try std.Thread.spawn(.{}, dispatchWayland, .{ &self.display, dispatch_receiver });
-        } else {
-            assert(self.dispatch_thread == null);
-            while (true) {
-                try self.display.dispatch();
-            }
+        while (true) {
+            try self.display.dispatch();
         }
     }
 };
@@ -347,12 +314,12 @@ fn dataControlSourceListener(data_source: *Device.DataSource, event: Device.Data
             if (state.paste_once) {
                 repeats += 1;
                 if (repeats == 3) {
-                    state.sender.send({});
+                    state.stop = true;
                 }
             }
         },
         .cancelled => {
-            state.sender.send({});
+            state.stop = true;
         },
     }
 }
@@ -449,28 +416,4 @@ fn dataControlOfferListener(data_offer: *Device.DataOffer, event: Device.DataOff
             state.mime_types.append(state.alloc, mime_type_copy) catch return;
         },
     }
-}
-
-fn dispatchWayland(display: *Display, receiver: channel.broadcast(void).Receiver) void {
-    var recv = receiver;
-    while (recv.tryReceive() == null) {
-        display.dispatch() catch continue;
-    }
-}
-
-test "copy" {
-    const alloc = std.testing.allocator;
-
-    {
-        var wl_clipboard = try WlClipboard.init(alloc, .{});
-        defer wl_clipboard.deinit(alloc);
-
-        var res = try wl_clipboard.paste(alloc, .{});
-        res.deinit(alloc);
-    }
-
-    //_ = try wl_clipboard.copy(alloc, .{ .bytes = "test" }, .{});
-    //try wl_clipboard.dispatchLoop(alloc, .threaded);
-
-    //wl_clipboard.sender.send({});
 }
