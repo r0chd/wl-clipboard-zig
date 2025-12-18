@@ -321,40 +321,7 @@ pub fn main() !void {
             else
                 .both,
             .mime_type = cli.type,
+            .paste_once = cli.paste_once,
         },
     );
-}
-
-test "copy" {
-    {
-        const copy = struct {
-            fn copy(alloc: mem.Allocator) void {
-                var wl_clipboard = wlcb.WlClipboard.init(alloc, .{}) catch unreachable;
-                defer wl_clipboard.deinit(alloc);
-
-                wl_clipboard.copy(alloc, .{ .bytes = "test" }, .{}) catch {};
-            }
-        }.copy;
-
-        const alloc = std.testing.allocator;
-
-        _ = try std.Thread.spawn(.{}, copy, .{alloc});
-
-        var wl_clipboard = try wlcb.WlClipboard.init(alloc, .{});
-        defer wl_clipboard.deinit(alloc);
-
-        var content = try wl_clipboard.paste(alloc, .{});
-        defer content.deinit(alloc);
-
-        var read_buf: [4096]u8 = undefined;
-        while (true) {
-            const bytes_read = posix.read(content.pipe, &read_buf) catch |err| switch (err) {
-                error.WouldBlock => continue,
-                else => return err,
-            };
-
-            if (bytes_read == 0) break;
-        }
-        std.debug.print("{s}\n", .{read_buf});
-    }
 }

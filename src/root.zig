@@ -313,7 +313,7 @@ fn dataControlSourceListener(data_source: *Device.DataSource, event: Device.Data
 
             if (state.paste_once) {
                 repeats += 1;
-                if (repeats == 3) {
+                if (repeats == 2) {
                     state.stop = true;
                 }
             }
