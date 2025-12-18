@@ -1,10 +1,8 @@
 // Preallocated contexts that are free'd once at the end of the program to avoid unnecessary
 // memory allocations and free's everytime WlClipboard.copy or WlClipboard.watch is called
 
-const atomic = std.atomic;
 const std = @import("std");
 const mem = std.mem;
-const channel = @import("channel.zig");
 const tmp = @import("tmpfile.zig");
 const Display = @import("wayland/Display.zig");
 const Device = @import("Device.zig");

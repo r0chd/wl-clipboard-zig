@@ -37,7 +37,7 @@ pub const TmpFile = struct {
 
     pub fn deinit(self: *TmpFile, alloc: mem.Allocator) void {
         self.f.close();
-        std.fs.deleteFileAbsolute(self.abs_path) catch {};
+        std.fs.deleteFileAbsolute(self.abs_path) catch |err| std.log.warn("Failed to delete tmpfile {s}: {}\n", .{ self.abs_path, err });
         alloc.free(self.abs_path);
     }
 

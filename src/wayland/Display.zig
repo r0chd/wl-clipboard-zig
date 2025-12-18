@@ -1,4 +1,3 @@
-const std = @import("std");
 const wl = @import("wayland").client.wl;
 
 display: *wl.Display,
