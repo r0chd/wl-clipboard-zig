@@ -2,6 +2,7 @@ const wl = @import("wayland").client.wl;
 const std = @import("std");
 const mem = std.mem;
 const posix = std.posix;
+const ffi = @cImport(@cInclude("tree_magic_mini.h"));
 const os = std.os;
 const fs = std.fs;
 const mimeTypeIsText = @import("MimeType.zig").mimeTypeIsText;
@@ -9,7 +10,6 @@ const MimeType = @import("MimeType.zig");
 const GlobalList = @import("wayland/GlobalList.zig");
 const Seat = @import("wayland/Seat.zig");
 const Device = @import("Device.zig");
-const Magic = @import("Magic.zig");
 const Display = @import("wayland/Display.zig");
 const Contexts = @import("Contexts.zig");
 pub const Backend = @import("Device.zig").Backend;
@@ -145,19 +145,11 @@ pub const WlClipboard = struct {
 
         try output_writer.interface.flush();
 
-        var magic = Magic.open(.mime_type);
-        defer if (magic) |*m| {
-            m.close();
-        };
         const mime = blk: {
             if (opts.mime_type) |mime_opt| {
                 break :blk mime_opt;
-            } else if (magic) |*m| {
-                if (m.file(tmpfile.abs_path)) |man| {
-                    break :blk man;
-                } else {
-                    break :blk "text/plain;charset=utf-8";
-                }
+            } else if (ffi.tree_magic_mini_from_fd(tmpfile.f.handle)) |mime| {
+                break :blk std.mem.span(mime);
             } else {
                 break :blk "text/plain;charset=utf-8";
             }
@@ -169,13 +161,9 @@ pub const WlClipboard = struct {
         switch (opts.clipboard) {
             .primary => {
                 if (mimeTypeIsText(mime)) {
-                    self.primary_data_source.offer("text/plain;charset=utf-8");
-                    self.primary_data_source.offer("text/plain");
-                    self.primary_data_source.offer("TEXT");
-                    self.primary_data_source.offer("STRING");
-                    self.primary_data_source.offer("UTF8_STRING");
+                    self.primary_data_source.set_mime_types(&[_][:0]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
                 } else {
-                    self.primary_data_source.offer(mime);
+                    self.primary_data_source.set_mime_types(&[_][:0]const u8{mime});
                 }
 
                 self.primary_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);
@@ -183,13 +171,9 @@ pub const WlClipboard = struct {
             },
             .regular => {
                 if (mimeTypeIsText(mime)) {
-                    self.regular_data_source.offer("text/plain;charset=utf-8");
-                    self.regular_data_source.offer("text/plain");
-                    self.regular_data_source.offer("TEXT");
-                    self.regular_data_source.offer("STRING");
-                    self.regular_data_source.offer("UTF8_STRING");
+                    self.regular_data_source.set_mime_types(&[_][:0]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
                 } else {
-                    self.regular_data_source.offer(mime);
+                    self.regular_data_source.set_mime_types(&[_][:0]const u8{mime});
                 }
 
                 self.regular_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);
@@ -197,20 +181,11 @@ pub const WlClipboard = struct {
             },
             .both => {
                 if (mimeTypeIsText(mime)) {
-                    self.regular_data_source.offer("text/plain;charset=utf-8");
-                    self.regular_data_source.offer("text/plain");
-                    self.regular_data_source.offer("TEXT");
-                    self.regular_data_source.offer("STRING");
-                    self.regular_data_source.offer("UTF8_STRING");
-
-                    self.primary_data_source.offer("text/plain;charset=utf-8");
-                    self.primary_data_source.offer("text/plain");
-                    self.primary_data_source.offer("TEXT");
-                    self.primary_data_source.offer("STRING");
-                    self.primary_data_source.offer("UTF8_STRING");
+                    self.regular_data_source.set_mime_types(&[_][:0]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
+                    self.primary_data_source.set_mime_types(&[_][:0]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
                 } else {
-                    self.regular_data_source.offer(mime);
-                    self.primary_data_source.offer(mime);
+                    self.regular_data_source.set_mime_types(&[_][:0]const u8{mime});
+                    self.primary_data_source.set_mime_types(&[_][:0]const u8{mime});
                 }
 
                 self.regular_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);
