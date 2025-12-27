@@ -289,7 +289,7 @@ pub const WlClipboard = struct {
     }
 };
 
-var repeats: u32 = 0;
+var initialized: bool = false;
 
 fn dataControlSourceListener(data_source: *Device.DataSource, event: Device.DataSource.Event, state: *Contexts.CopyContext) void {
     _ = data_source;
@@ -299,18 +299,23 @@ fn dataControlSourceListener(data_source: *Device.DataSource, event: Device.Data
 
             var offset: i64 = 0;
             while (true) {
-                const sent = os.linux.sendfile(data.fd, state.tmpfile.f.handle, &offset, 65536);
+                const sent = os.linux.sendfile(
+                    data.fd,
+                    state.tmpfile.f.handle,
+                    &offset,
+                    65536,
+                );
 
                 if (sent == 0) break;
-                offset += @intCast(sent);
             }
 
             posix.close(data.fd);
 
             if (state.paste_once) {
-                repeats += 1;
-                if (repeats == 2) {
+                if (initialized) {
                     state.stop = true;
+                } else {
+                    initialized = true;
                 }
             }
         },
