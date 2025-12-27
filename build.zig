@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
-    mod.linkSystemLibrary("magic", .{});
+    mod.linkSystemLibrary("tree_magic_mini", .{});
     mod.addImport("mime", mime.module("mime"));
     mod.addImport("wayland", wayland);
     mod.linkSystemLibrary("wayland-client", .{});
@@ -42,8 +42,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    wl_copy.linkSystemLibrary("magic");
-    wl_copy.linkSystemLibrary("wayland-client");
     b.installArtifact(wl_copy);
 
     const wl_paste = b.addExecutable(.{
@@ -58,8 +56,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    wl_paste.linkSystemLibrary("magic");
-    wl_paste.linkSystemLibrary("wayland-client");
     b.installArtifact(wl_paste);
 
     const copy_step = b.step("copy", "Run wl-copy binary");

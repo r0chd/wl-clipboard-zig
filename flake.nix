@@ -11,9 +11,12 @@
       url = "github:mitchellh/zig-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    tree_magic.url = "github:r0chd/tree_magic";
   };
   outputs =
     {
+      self,
+      tree_magic,
       nixpkgs,
       zig,
       zls,
@@ -33,6 +36,7 @@
           packages = builtins.attrValues {
             inherit (zig.packages.${pkgs.stdenv.hostPlatform.system}) "0.15.2";
             inherit (zls.packages.${pkgs.stdenv.hostPlatform.system}) default;
+            inherit (tree_magic.packages.${pkgs.stdenv.hostPlatform.system}) tree_magic_mini;
             inherit (pkgs)
               pkg-config
               wayland
@@ -43,7 +47,6 @@
               nixd
               nixfmt-rfc-style
               valgrind
-              file
               zig-zlint
               ;
           };
@@ -51,7 +54,10 @@
       });
 
       packages = forAllSystems (pkgs: {
-        default = pkgs.callPackage ./nix/package.nix { };
+        wl-clipboard-zig = pkgs.callPackage ./nix/package.nix {
+          inherit (tree_magic.packages.${pkgs.stdenv.hostPlatform.system}) tree_magic_mini;
+        };
+        default = self.packages.${pkgs.stdenv.hostPlatform.system}.wl-clipboard-zig;
       });
     };
 }

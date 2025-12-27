@@ -98,9 +98,9 @@ pub const DataSource = struct {
         cancelled: void,
     };
 
-    pub fn offer(self: *DataSource, mime_type: [:0]const u8) void {
+    pub fn set_mime_types(self: *DataSource, mime_types: []const [:0]const u8) void {
         switch (self.inner) {
-            inline .ext, .wlr => |source| source.offer(mime_type),
+            inline .ext, .wlr => |source| for (mime_types) |mime_type| source.offer(mime_type),
             .portal => {},
         }
     }
