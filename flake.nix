@@ -36,7 +36,6 @@
               wayland
               wayland-scanner
               wayland-protocols
-              wayland-utils
               clang-tools
               nixd
               nixfmt-rfc-style
