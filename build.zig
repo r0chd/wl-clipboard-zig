@@ -19,6 +19,11 @@ pub fn build(b: *std.Build) void {
     scanner.generate("ext_data_control_manager_v1", 1);
     scanner.generate("zwlr_data_control_manager_v1", 2);
 
+    const tmpfile = b.addModule("tmpfile", .{
+        .root_source_file = b.path("src/tmpfile.zig"),
+        .target = target,
+    });
+
     const mod = b.addModule("wl_clipboard", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -26,6 +31,7 @@ pub fn build(b: *std.Build) void {
     });
 
     mod.linkSystemLibrary("tree_magic_mini", .{});
+    mod.addImport("tmpfile", tmpfile);
     mod.addImport("mime", mime.module("mime"));
     mod.addImport("wayland", wayland);
     mod.linkSystemLibrary("wayland-client", .{});
@@ -42,6 +48,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    wl_copy.root_module.addImport("tmpfile", tmpfile);
     b.installArtifact(wl_copy);
 
     const wl_paste = b.addExecutable(.{

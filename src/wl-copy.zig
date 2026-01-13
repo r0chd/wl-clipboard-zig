@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const wlcb = @import("wl_clipboard");
+const tmp = @import("tmpfile");
 
 const mem = std.mem;
 const meta = std.meta;
@@ -250,15 +251,27 @@ pub fn main() !void {
     verbose_enabled = cli.verbose;
     defer cli.deinit(alloc);
 
-    // Read stdin before forking if we need to use it
-    var stdin_data: ?[]u8 = null;
-    defer if (stdin_data) |data| alloc.free(data);
+    var stdin_file: fs.File = fs.File.stdin();
+    var stdin_tmpfile: ?tmp.TmpFile = null;
+    defer if (stdin_tmpfile) |*file| file.deinit(alloc);
 
     if (cli.data == null and !cli.clear and !cli.foreground) {
         var stdin_buffer: [4096]u8 = undefined;
         var stdin = fs.File.stdin();
-        var stdin_reader = stdin.reader(&stdin_buffer);
-        stdin_data = try stdin_reader.interface.allocRemaining(alloc, .unlimited);
+        var stdin_reader = stdin.readerStreaming(&stdin_buffer);
+
+        var tmp_buffer: [4098]u8 = undefined;
+        var tmpfile = try tmp.TmpFile.init(alloc, .{
+            .flags = .{ .read = true, .mode = 0o400 },
+        });
+        var writer = tmpfile.f.writer(&tmp_buffer);
+        var iowriter = &writer.interface;
+
+        _ = try iowriter.sendFileAll(&stdin_reader, .unlimited);
+        try iowriter.flush();
+
+        stdin_file = tmpfile.f;
+        stdin_tmpfile = tmpfile;
     }
 
     if (!cli.foreground and !cli.clear) {
@@ -314,10 +327,8 @@ pub fn main() !void {
         alloc,
         if (cli.data) |data|
             .{ .bytes = data }
-        else if (stdin_data) |data|
-            .{ .bytes = data }
         else
-            .{ .file = fs.File.stdin() },
+            .{ .file = stdin_file },
         .{
             .clipboard = if (!cli.regular and cli.primary)
                 .primary

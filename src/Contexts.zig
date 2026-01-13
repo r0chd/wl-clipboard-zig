@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const mem = std.mem;
-const tmp = @import("tmpfile.zig");
+const tmp = @import("tmpfile");
 const Display = @import("wayland/Display.zig");
 const Device = @import("Device.zig");
 const Event = @import("root.zig").Event;
