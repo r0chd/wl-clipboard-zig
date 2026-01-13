@@ -3,7 +3,6 @@ const std = @import("std");
 const mem = std.mem;
 const posix = std.posix;
 const ffi = @cImport(@cInclude("tree_magic_mini.h"));
-const os = std.os;
 const fs = std.fs;
 const mimeTypeIsText = @import("MimeType.zig").mimeTypeIsText;
 const MimeType = @import("MimeType.zig");
@@ -24,18 +23,18 @@ const ClipboardContent = struct {
         return self.mime_types.items;
     }
 
-    pub fn deinit(self: *Self, alloc: mem.Allocator) void {
+    pub fn deinit(self: *Self, gpa: mem.Allocator) void {
         for (self.mime_types.items) |mime_type| {
-            alloc.free(mime_type);
+            gpa.free(mime_type);
         }
-        self.mime_types.deinit(alloc);
+        self.mime_types.deinit(gpa);
     }
 };
 
 const PasteContext = struct {
     offer: ?*Device.DataOffer = null,
     mime_types: std.ArrayList([:0]const u8) = .empty,
-    alloc: mem.Allocator,
+    gpa: mem.Allocator,
     primary: bool,
 
     const Self = @This();
@@ -47,7 +46,7 @@ const PasteContext = struct {
         }
         self.mime_types.clearRetainingCapacity();
         self.primary = false;
-        self.alloc = undefined;
+        self.gpa = undefined;
     }
 };
 
@@ -74,12 +73,12 @@ pub const WlClipboard = struct {
 
     const Self = @This();
 
-    pub fn init(alloc: mem.Allocator, opts: struct {
+    pub fn init(gpa: mem.Allocator, opts: struct {
         seat_name: ?[:0]const u8 = null,
         force_backend: ?Backend = null,
     }) !Self {
         var display = try Display.connect(null);
-        const globals = try GlobalList.init(&display, alloc);
+        const globals = try GlobalList.init(&display, gpa);
 
         const compositor = globals.bind(wl.Compositor, wl.Compositor.generated_version).?;
         const seat = Seat.init(&display, &globals, .{ .name = opts.seat_name }) orelse return error.SeatNotFound;
@@ -96,24 +95,24 @@ pub const WlClipboard = struct {
             .globals = globals,
             .regular_data_source = regular_data_source,
             .primary_data_source = primary_data_source,
-            .contexts = try Contexts.init(alloc, display),
+            .contexts = try Contexts.init(gpa, display),
         };
     }
 
-    pub fn deinit(self: *Self, alloc: mem.Allocator) void {
+    pub fn deinit(self: *Self, gpa: mem.Allocator) void {
         self.regular_data_source.deinit();
         self.primary_data_source.deinit();
         self.device.deinit();
         self.compositor.destroy();
-        self.globals.deinit(alloc);
+        self.globals.deinit(gpa);
         self.seat.deinit();
         self.display.disconnect();
-        self.contexts.deinit(alloc);
+        self.contexts.deinit(gpa);
     }
 
     pub fn copy(
         self: *Self,
-        alloc: mem.Allocator,
+        gpa: mem.Allocator,
         source: Source,
         opts: struct {
             clipboard: enum {
@@ -128,22 +127,22 @@ pub const WlClipboard = struct {
         var output_buffer: [4096]u8 = undefined;
 
         var tmpfile = &self.contexts.copy.tmpfile;
-        try tmpfile.f.seekTo(0);
-        try tmpfile.f.setEndPos(0);
         var output_writer = tmpfile.f.writer(&output_buffer);
+        var output_iowriter = &output_writer.interface;
 
         switch (source) {
             .file => |file| {
-                var reader = file.readerStreaming(&.{});
+                var buffer: [4098]u8 = undefined;
+                var reader = file.readerStreaming(&buffer);
 
-                _ = try output_writer.interface.sendFileAll(&reader, .unlimited);
+                _ = try output_iowriter.sendFileAll(&reader, .unlimited);
             },
             .bytes => |data| {
-                _ = try output_writer.interface.writeAll(data);
+                _ = try output_iowriter.writeAll(data);
             },
         }
 
-        try output_writer.interface.flush();
+        try output_iowriter.flush();
 
         const mime = blk: {
             if (opts.mime_type) |mime_opt| {
@@ -156,7 +155,7 @@ pub const WlClipboard = struct {
         };
 
         self.contexts.copy.paste_once = opts.paste_once;
-        self.contexts.copy.mime_type = try alloc.dupeZ(u8, mime);
+        self.contexts.copy.mime_type = try gpa.dupeZ(u8, mime);
 
         switch (opts.clipboard) {
             .primary => {
@@ -205,22 +204,22 @@ pub const WlClipboard = struct {
 
     pub fn paste(
         self: *Self,
-        alloc: mem.Allocator,
+        gpa: mem.Allocator,
         opts: struct {
             primary: bool = false,
             mime_type: ?[:0]const u8 = null,
         },
     ) !ClipboardContent {
         var paste_context = PasteContext{
-            .alloc = alloc,
+            .gpa = gpa,
             .primary = opts.primary,
         };
         defer paste_context.deinit();
         errdefer {
             for (paste_context.mime_types.items) |mime_type| {
-                alloc.free(mime_type);
+                gpa.free(mime_type);
             }
-            paste_context.mime_types.deinit(alloc);
+            paste_context.mime_types.deinit(gpa);
         }
 
         self.device.setListener(*PasteContext, deviceListener, &paste_context);
@@ -247,14 +246,14 @@ pub const WlClipboard = struct {
 
     pub fn watch(
         self: *Self,
-        alloc: mem.Allocator,
+        gpa: mem.Allocator,
         comptime T: type,
         callback: *const fn (Event, T) void,
         data: T,
     ) !void {
         self.contexts.watch.callback = @ptrCast(callback);
         self.contexts.watch.data = @ptrCast(data);
-        self.contexts.watch.alloc = alloc;
+        self.contexts.watch.gpa = gpa;
 
         self.device.setListener(*Contexts.WatchContext, deviceListenerWatch, &self.contexts.watch);
 
@@ -272,19 +271,15 @@ fn dataControlSourceListener(data_source: *Device.DataSource, event: Device.Data
         .send => |data| {
             _ = state.tmpfile.f.seekTo(0) catch return;
 
-            var offset: i64 = 0;
-            while (true) {
-                const sent = os.linux.sendfile(
-                    data.fd,
-                    state.tmpfile.f.handle,
-                    &offset,
-                    65536,
-                );
+            var read_buffer: [4098]u8 = undefined;
+            var reader = state.tmpfile.f.reader(&read_buffer);
 
-                if (sent == 0) break;
-            }
-
-            posix.close(data.fd);
+            var buffer: [4098]u8 = undefined;
+            var file = fs.File{ .handle = data.fd };
+            defer file.close();
+            var writer = file.writerStreaming(&buffer);
+            var io_writer = &writer.interface;
+            _ = io_writer.sendFileAll(&reader, .unlimited) catch |err| std.debug.panic("{s}\n", .{@errorName(err)});
 
             if (state.paste_once) {
                 if (initialized) {
@@ -331,8 +326,8 @@ fn dataControlOfferListenerWatch(data_offer: *Device.DataOffer, event: Device.Da
                     return;
                 }
             }
-            const mime_type_copy = state.alloc.dupeZ(u8, mime_type) catch return;
-            state.mime_types.append(state.alloc, mime_type_copy) catch return;
+            const mime_type_copy = state.gpa.dupeZ(u8, mime_type) catch return;
+            state.mime_types.append(state.gpa, mime_type_copy) catch return;
         },
     }
 }
@@ -388,8 +383,8 @@ fn dataControlOfferListener(data_offer: *Device.DataOffer, event: Device.DataOff
                     return;
                 }
             }
-            const mime_type_copy = state.alloc.dupeZ(u8, mime_type) catch return;
-            state.mime_types.append(state.alloc, mime_type_copy) catch return;
+            const mime_type_copy = state.gpa.dupeZ(u8, mime_type) catch return;
+            state.mime_types.append(state.gpa, mime_type_copy) catch return;
         },
     }
 }

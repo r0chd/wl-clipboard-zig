@@ -1,11 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const wlcb = @import("wl_clipboard");
+
 const mem = std.mem;
 const meta = std.meta;
 const fs = std.fs;
 const posix = std.posix;
 const os = std.os;
+const log = std.log;
+const process = std.process;
 
 var verbose_enabled = false;
 
@@ -15,14 +18,14 @@ pub const std_options: std.Options = .{
 };
 
 fn logFn(
-    comptime level: std.log.Level,
+    comptime level: log.Level,
     comptime scope: @Type(.enum_literal),
     comptime format: []const u8,
     args: anytype,
 ) void {
     if (level == .debug and !verbose_enabled) return;
 
-    std.log.defaultLog(level, scope, format, args);
+    log.defaultLog(level, scope, format, args);
 }
 
 const Arguments = enum {
@@ -74,7 +77,7 @@ const Cli = struct {
         var list: std.ArrayList(u8) = .empty;
         defer list.deinit(alloc);
 
-        var args = std.process.args();
+        var args = process.args();
         var index: u8 = 0;
         while (args.next()) |arg| : (index += 1) {
             if (index == 0) continue;
@@ -82,12 +85,12 @@ const Cli = struct {
             if (meta.stringToEnum(Arguments, arg)) |argument| {
                 switch (argument) {
                     .@"--help", .@"-h" => {
-                        std.log.info("{s}\n", .{help_message});
-                        std.process.exit(0);
+                        log.info("{s}\n", .{help_message});
+                        process.exit(0);
                     },
                     .@"--version", .@"-V" => {
-                        std.log.info("wl-copy v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
-                        std.process.exit(0);
+                        log.info("wl-copy v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
+                        process.exit(0);
                     },
                     .@"--verbose", .@"-v" => {
                         self.verbose = true;
@@ -112,20 +115,20 @@ const Cli = struct {
                         if (args.next()) |flag_arg| {
                             self.type = flag_arg;
                         } else {
-                            std.log.err("the argument '--type <MIME/TYPE>' requires a value but none was supplied\n\n", .{});
+                            log.err("the argument '--type <MIME/TYPE>' requires a value but none was supplied\n\n", .{});
                             std.debug.print("Usage: wl-copy [OPTIONS] [TEXT TO COPY]...\n\n", .{});
                             std.debug.print("For more information, try '--help'.\n", .{});
-                            std.process.exit(2);
+                            process.exit(2);
                         }
                     },
                     .@"--seat", .@"-s" => {
                         if (args.next()) |flag_arg| {
                             self.seat = flag_arg;
                         } else {
-                            std.log.err("the argument '--seat <SEAT>' requires a value but none was supplied\n\n", .{});
+                            log.err("the argument '--seat <SEAT>' requires a value but none was supplied\n\n", .{});
                             std.debug.print("Usage: wl-copy [OPTIONS] [TEXT TO COPY]...\n\n", .{});
                             std.debug.print("For more information, try '--help'.\n", .{});
-                            std.process.exit(2);
+                            process.exit(2);
                         }
                     },
                     .@"--regular", .@"-r" => {
@@ -134,7 +137,7 @@ const Cli = struct {
                     .@"--backend", .@"-b" => {
                         if (args.next()) |flag_arg| {
                             self.backend = meta.stringToEnum(wlcb.Backend, flag_arg) orelse {
-                                std.log.err("invalid value '{s}' for '--backend <BACKEND>'\n", .{flag_arg});
+                                log.err("invalid value '{s}' for '--backend <BACKEND>'\n", .{flag_arg});
                                 std.debug.print("  [possible values: ", .{});
                                 inline for (meta.fields(wlcb.Backend), 0..) |field, i| {
                                     std.debug.print("{s}", .{field.name});
@@ -145,13 +148,13 @@ const Cli = struct {
                                 std.debug.print("]\n\n", .{});
                                 std.debug.print("Usage: wl-copy [OPTIONS] [TEXT TO COPY]...\n\n", .{});
                                 std.debug.print("For more information, try '--help'.\n", .{});
-                                std.process.exit(2);
+                                process.exit(2);
                             };
                         } else {
-                            std.log.err("the argument '--backend <BACKEND>' requires a value but none was supplied\n\n", .{});
+                            log.err("the argument '--backend <BACKEND>' requires a value but none was supplied\n\n", .{});
                             std.debug.print("Usage: wl-copy [OPTIONS] [TEXT TO COPY]...\n\n", .{});
                             std.debug.print("For more information, try '--help'.\n", .{});
-                            std.process.exit(2);
+                            process.exit(2);
                         }
                     },
                 }
@@ -174,7 +177,7 @@ const Cli = struct {
         return self;
     }
 
-    fn deinit(self: Self, alloc: std.mem.Allocator) void {
+    fn deinit(self: Self, alloc: mem.Allocator) void {
         if (self.data) |data| {
             alloc.free(data);
         }
@@ -252,8 +255,10 @@ pub fn main() !void {
     defer if (stdin_data) |data| alloc.free(data);
 
     if (cli.data == null and !cli.clear and !cli.foreground) {
-        var stdin_file = fs.File.stdin();
-        stdin_data = try stdin_file.readToEndAlloc(alloc, std.math.maxInt(usize));
+        var stdin_buffer: [4096]u8 = undefined;
+        var stdin = fs.File.stdin();
+        var stdin_reader = stdin.reader(&stdin_buffer);
+        stdin_data = try stdin_reader.interface.allocRemaining(alloc, .unlimited);
     }
 
     if (!cli.foreground and !cli.clear) {
@@ -270,16 +275,16 @@ pub fn main() !void {
         defer root.close();
         try root.setAsCwd();
 
-        const sa = std.posix.Sigaction{
-            .handler = .{ .handler = std.posix.SIG.IGN },
-            .mask = std.posix.sigemptyset(),
+        const sa = posix.Sigaction{
+            .handler = .{ .handler = posix.SIG.IGN },
+            .mask = posix.sigemptyset(),
             .flags = 0,
         };
         posix.sigaction(posix.SIG.HUP, &sa, null);
 
         const pid = try posix.fork();
         if (pid < 0) {
-            std.log.err("fork\n", .{});
+            log.err("fork\n", .{});
         } else if (pid > 0) {
             posix.exit(0);
         }
@@ -312,7 +317,7 @@ pub fn main() !void {
         else if (stdin_data) |data|
             .{ .bytes = data }
         else
-            .{ .file = std.fs.File.stdin() },
+            .{ .file = fs.File.stdin() },
         .{
             .clipboard = if (!cli.regular and cli.primary)
                 .primary

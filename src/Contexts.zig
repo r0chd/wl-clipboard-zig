@@ -1,5 +1,5 @@
-// Preallocated contexts that are free'd once at the end of the program to avoid unnecessary
-// memory allocations and free's everytime WlClipboard.copy or WlClipboard.watch is called
+// Initializing those contexts here to avoid heap allocation of them when passing to
+// wayland callbacks
 
 const std = @import("std");
 const mem = std.mem;
@@ -23,7 +23,7 @@ pub fn init(alloc: mem.Allocator, display: Display) !Self {
         },
         .watch = .{
             .offer = null,
-            .alloc = alloc,
+            .gpa = alloc,
             .callback = undefined,
             .data = undefined,
             .mime_types = .empty,
@@ -59,7 +59,7 @@ pub const CopyContext = struct {
 
 pub const WatchContext = struct {
     offer: ?*Device.DataOffer = null,
-    alloc: mem.Allocator,
+    gpa: mem.Allocator,
     callback: *const fn (Event, *anyopaque) void,
     data: *anyopaque,
     mime_types: std.ArrayList([:0]const u8) = .empty,

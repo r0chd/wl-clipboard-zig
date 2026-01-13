@@ -1,9 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const wlcb = @import("wl_clipboard");
+
 const mem = std.mem;
 const meta = std.meta;
 const posix = std.posix;
+const fs = std.fs;
+const log = std.log;
+const process = std.process;
 
 var verbose_enabled = false;
 
@@ -13,14 +17,14 @@ pub const std_options: std.Options = .{
 };
 
 fn logFn(
-    comptime level: std.log.Level,
+    comptime level: log.Level,
     comptime scope: @Type(.enum_literal),
     comptime format: []const u8,
     args: anytype,
 ) void {
     if (level == .debug and !verbose_enabled) return;
 
-    std.log.defaultLog(level, scope, format, args);
+    log.defaultLog(level, scope, format, args);
 }
 
 const Arguments = enum {
@@ -62,25 +66,25 @@ const Cli = struct {
     fn init(alloc: mem.Allocator) !Self {
         var self = Cli{};
 
-        var args = std.process.args();
+        var args = process.args();
         var index: u8 = 0;
         while (args.next()) |arg| : (index += 1) {
             if (index == 0) continue;
 
-            const argument = std.meta.stringToEnum(Arguments, arg) orelse {
-                std.log.err("unexpected argument '{s}' found\n", .{arg});
+            const argument = meta.stringToEnum(Arguments, arg) orelse {
+                log.err("unexpected argument '{s}' found\n", .{arg});
                 std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
                 std.debug.print("For more information, try '--help'.\n", .{});
-                std.process.exit(2);
+                process.exit(2);
             };
             switch (argument) {
                 .@"--help", .@"-h" => {
-                    std.log.info("{s}\n", .{help_message});
-                    std.process.exit(0);
+                    log.info("{s}\n", .{help_message});
+                    process.exit(0);
                 },
                 .@"--version", .@"-V" => {
-                    std.log.info("wl-paste v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
-                    std.process.exit(0);
+                    log.info("wl-paste v0.1.0 \nBuild type: {any}\nZig {any}\n", .{ builtin.mode, builtin.zig_version });
+                    process.exit(0);
                 },
                 .@"--verbose", .@"-v" => {
                     self.verbose = true;
@@ -107,26 +111,26 @@ const Cli = struct {
                     if (args.next()) |flag_arg| {
                         self.seat = flag_arg;
                     } else {
-                        std.log.err("the argument '--seat <SEAT>' requires a value but none was supplied\n", .{});
+                        log.err("the argument '--seat <SEAT>' requires a value but none was supplied\n", .{});
                         std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
                         std.debug.print("For more information, try '--help'.\n", .{});
-                        std.process.exit(2);
+                        process.exit(2);
                     }
                 },
                 .@"--type", .@"-t" => {
                     if (args.next()) |flag_arg| {
                         self.type = flag_arg;
                     } else {
-                        std.log.err("the argument '--type <MIME/TYPE>' requires a value but none was supplied\n", .{});
+                        log.err("the argument '--type <MIME/TYPE>' requires a value but none was supplied\n", .{});
                         std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
                         std.debug.print("For more information, try '--help'.\n", .{});
-                        std.process.exit(2);
+                        process.exit(2);
                     }
                 },
                 .@"--backend", .@"-b" => {
                     if (args.next()) |flag_arg| {
                         self.backend = meta.stringToEnum(wlcb.Backend, flag_arg) orelse {
-                            std.log.err("invalid value '{s}' for '--backend <BACKEND>'\n", .{flag_arg});
+                            log.err("invalid value '{s}' for '--backend <BACKEND>'\n", .{flag_arg});
                             std.debug.print("  [possible values: ", .{});
                             inline for (meta.fields(wlcb.Backend), 0..) |field, i| {
                                 std.debug.print("{s}", .{field.name});
@@ -137,13 +141,13 @@ const Cli = struct {
                             std.debug.print("]\n\n", .{});
                             std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
                             std.debug.print("For more information, try '--help'.\n", .{});
-                            std.process.exit(2);
+                            process.exit(2);
                         };
                     } else {
                         std.log.err("the argument '--backend <BACKEND>' requires a value but none was supplied\n", .{});
                         std.debug.print("Usage: wl-paste [OPTIONS]\n\n", .{});
                         std.debug.print("For more information, try '--help'.\n", .{});
-                        std.process.exit(2);
+                        process.exit(2);
                     }
                 },
             }
@@ -208,60 +212,40 @@ const help_message =
 const CallbackData = struct { command: [][:0]const u8, alloc: mem.Allocator, clipboard: enum { primary, regular } };
 
 fn clipboardCallback(event: wlcb.Event, data: *CallbackData) void {
-    var read_buf: [4096]u8 = undefined;
-    var wrote_anything = false;
-
-    var data_buf: [4096 * 16]u8 = undefined;
-    var data_len: usize = 0;
-
-    switch (event) {
-        .primary_selection => |pipe| {
-            if (data.clipboard == .primary) {
-                while (true) {
-                    const bytes_read = posix.read(pipe, &read_buf) catch |err| switch (err) {
-                        error.WouldBlock => continue,
-                        else => return,
-                    };
-
-                    if (bytes_read == 0) break;
-                    wrote_anything = true;
-
-                    if (data_len + bytes_read <= data_buf.len) {
-                        @memcpy(data_buf[data_len .. data_len + bytes_read], read_buf[0..bytes_read]);
-                        data_len += bytes_read;
-                    }
+    const pipe = blk: {
+        switch (event) {
+            .primary_selection => |pipe| {
+                if (data.clipboard == .primary) {
+                    break :blk pipe;
                 }
-            }
-        },
-        .selection => |pipe| {
-            if (data.clipboard == .regular) {
-                while (true) {
-                    const bytes_read = posix.read(pipe, &read_buf) catch |err| switch (err) {
-                        error.WouldBlock => continue,
-                        else => return,
-                    };
-
-                    if (bytes_read == 0) break;
-                    wrote_anything = true;
-
-                    if (data_len + bytes_read <= data_buf.len) {
-                        @memcpy(data_buf[data_len .. data_len + bytes_read], read_buf[0..bytes_read]);
-                        data_len += bytes_read;
-                    }
+            },
+            .selection => |pipe| {
+                if (data.clipboard == .regular) {
+                    break :blk pipe;
                 }
-            }
-        },
-    }
+            },
+        }
+        break :blk null;
+    };
 
-    if (wrote_anything) {
-        var child = std.process.Child.init(data.command, data.alloc);
+    if (pipe) |p| {
+        var read_buffer: [4098]u8 = undefined;
+        var file = fs.File{ .handle = p };
+        var reader = file.reader(&read_buffer);
+
+        var child = process.Child.init(data.command, data.alloc);
         child.stdin_behavior = .Pipe;
 
         child.spawn() catch return;
-        child.stdin.?.writeAll(data_buf[0..data_len]) catch return;
+
+        var write_buffer: [4098]u8 = undefined;
+        var writer = child.stdin.?.writer(&write_buffer);
+        var stdout = &writer.interface;
+        _ = stdout.sendFileAll(&reader, .unlimited) catch |err| std.debug.panic("{s}\n", .{@errorName(err)});
+        stdout.flush() catch |err| std.debug.panic("{s}\n", .{@errorName(err)});
+
         child.stdin.?.close();
         child.stdin = null;
-
         _ = child.wait() catch return;
     }
 }
@@ -270,7 +254,7 @@ pub fn main() !void {
     const alloc = std.heap.c_allocator;
 
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     const cli = try Cli.init(alloc);
@@ -300,17 +284,11 @@ pub fn main() !void {
         return;
     }
 
-    var read_buf: [4096]u8 = undefined;
-    while (true) {
-        const bytes_read = posix.read(clipboard_content.pipe, &read_buf) catch |err| switch (err) {
-            error.WouldBlock => continue,
-            else => return err,
-        };
+    var read_buffer: [4098]u8 = undefined;
+    var file = fs.File{ .handle = clipboard_content.pipe };
+    var reader = file.reader(&read_buffer);
 
-        if (bytes_read == 0) break;
-        try stdout.writeAll(read_buf[0..bytes_read]);
-    }
-
+    _ = try stdout.sendFileAll(&reader, .unlimited);
     if (!cli.no_newline) {
         try stdout.writeAll("\n");
     }
