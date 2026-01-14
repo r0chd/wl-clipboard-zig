@@ -38,7 +38,7 @@
               wayland-protocols
               clang-tools
               nixd
-              nixfmt-rfc-style
+              nixfmt
               valgrind
               zig-zlint
               ;
