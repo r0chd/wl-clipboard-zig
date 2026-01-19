@@ -8,23 +8,30 @@ inner: Inner,
 
 const Self = @This();
 
-pub fn init(display: *Display, alloc: mem.Allocator) !Self {
+pub fn init(display: *Display, gpa: mem.Allocator) !Self {
     const registry = try display.getRegistry();
 
     var inner = Inner{};
 
-    registry.setListener(*const RegistryUserData, registryListener, &.{ .inner = &inner, .alloc = alloc });
+    registry.setListener(*const RegistryUserData, registryListener, &.{ .inner = &inner, .gpa = gpa });
     try display.roundtrip();
 
     return .{ .registry = registry, .inner = inner };
 }
 
-pub fn deinit(self: *Self, alloc: mem.Allocator) void {
+pub fn deinit(self: *Self, gpa: mem.Allocator) void {
     self.registry.destroy();
     for (self.inner.globals.items) |global| {
-        alloc.free(global.interface);
+        gpa.free(global.interface);
     }
-    self.inner.globals.deinit(alloc);
+    self.inner.globals.deinit(gpa);
+}
+
+pub fn findGlobal(self: *const Self, comptime T: type) bool {
+    for (self.inner.globals.items) |global| {
+        if (std.mem.eql(u8, mem.span(T.interface.name), global.interface)) return true;
+    }
+    return false;
 }
 
 pub fn bind(self: *const Self, comptime T: type, version: u32) ?*T {
@@ -43,14 +50,14 @@ const Inner = struct {
 
 const Global = struct { name: u32, interface: [:0]const u8, version: u32 };
 
-const RegistryUserData = struct { inner: *Inner, alloc: mem.Allocator };
+const RegistryUserData = struct { inner: *Inner, gpa: mem.Allocator };
 
 fn registryListener(_: *wl.Registry, event: wl.Registry.Event, state: *const RegistryUserData) void {
     switch (event) {
         .global => |global| {
-            state.inner.globals.append(state.alloc, .{
+            state.inner.globals.append(state.gpa, .{
                 .name = global.name,
-                .interface = state.alloc.dupeZ(u8, mem.span(global.interface)) catch return,
+                .interface = state.gpa.dupeZ(u8, mem.span(global.interface)) catch return,
                 .version = global.version,
             }) catch return;
         },
@@ -58,7 +65,7 @@ fn registryListener(_: *wl.Registry, event: wl.Registry.Event, state: *const Reg
             for (state.inner.globals.items, 0..) |global, i| {
                 if (global.name == removed.name) {
                     const removed_global = state.inner.globals.swapRemove(i);
-                    state.alloc.free(removed_global.interface);
+                    state.gpa.free(removed_global.interface);
                 }
             }
         },

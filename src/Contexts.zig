@@ -13,17 +13,17 @@ watch: WatchContext,
 
 const Self = @This();
 
-pub fn init(alloc: mem.Allocator, display: Display) !Self {
+pub fn init(gpa: mem.Allocator, display: Display) !Self {
     return .{
         .copy = .{
             .display = display,
-            .tmpfile = try tmp.TmpFile.init(alloc, .{
+            .tmpfile = try tmp.TmpFile.init(gpa, .{
                 .flags = .{ .read = true, .mode = 0o400 },
             }),
         },
         .watch = .{
             .offer = null,
-            .gpa = alloc,
+            .gpa = gpa,
             .callback = undefined,
             .data = undefined,
             .mime_types = .empty,
@@ -36,9 +36,9 @@ pub fn fixStopPointer(self: *Self, stop: *bool) void {
     self.copy.stop = stop;
 }
 
-pub fn deinit(self: *Self, alloc: mem.Allocator) void {
-    self.copy.deinit(alloc);
-    self.watch.mime_types.deinit(alloc);
+pub fn deinit(self: *Self, gpa: mem.Allocator) void {
+    self.copy.deinit(gpa);
+    self.watch.mime_types.deinit(gpa);
 }
 
 pub const CopyContext = struct {
@@ -48,12 +48,12 @@ pub const CopyContext = struct {
     paste_once: bool = false,
     mime_type: ?[:0]const u8 = null,
 
-    pub fn deinit(self: *CopyContext, alloc: mem.Allocator) void {
+    pub fn deinit(self: *CopyContext, gpa: mem.Allocator) void {
         if (self.mime_type) |mime_type| {
-            alloc.free(mime_type);
+            gpa.free(mime_type);
             self.mime_type = null;
         }
-        self.tmpfile.deinit(alloc);
+        self.tmpfile.deinit(gpa);
     }
 };
 

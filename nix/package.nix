@@ -7,11 +7,10 @@
   zig,
   pkg-config,
   callPackage,
-  tree_magic_mini,
 }:
 stdenv.mkDerivation (finalAttrs: {
   pname = "wl-clipboard-zig";
-  version = "0.1.0";
+  version = "0.1.3";
 
   src = ./..;
 
@@ -27,7 +26,6 @@ stdenv.mkDerivation (finalAttrs: {
 
   buildInputs = [
     wayland
-    tree_magic_mini
   ];
 
   zigBuildFlags = [ "--release=fast" ];

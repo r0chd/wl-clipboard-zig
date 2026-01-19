@@ -146,7 +146,7 @@ pub fn infer(self: *Self, explicit_mime_type: ?[:0]const u8) ![:0]const u8 {
     return self.available_mime_types[0];
 }
 
-pub fn mimeTypeIsText(mime_type: [:0]const u8) bool {
+pub fn mimeTypeIsText(mime_type: []const u8) bool {
     const basic = mem.startsWith(u8, mime_type, "text/") or
         mem.eql(u8, mime_type, "TEXT") or
         mem.eql(u8, mime_type, "STRING") or

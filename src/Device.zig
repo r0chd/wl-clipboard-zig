@@ -74,10 +74,10 @@ pub fn deinit(self: *Self) void {
 }
 
 fn detectBackend(globals: *const GlobalList) ?Backend {
-    if (globals.bind(ext.DataControlManagerV1, ext.DataControlManagerV1.generated_version) != null) {
+    if (globals.findGlobal(ext.DataControlManagerV1)) {
         return .ext;
     }
-    if (globals.bind(zwlr.DataControlManagerV1, zwlr.DataControlManagerV1.generated_version) != null) {
+    if (globals.findGlobal(zwlr.DataControlManagerV1)) {
         return .wlr;
     }
     return null;
@@ -98,9 +98,9 @@ pub const DataSource = struct {
         cancelled: void,
     };
 
-    pub fn set_mime_types(self: *DataSource, mime_types: []const [:0]const u8) void {
+    pub fn set_mime_types(self: *DataSource, mime_types: []const []const u8) void {
         switch (self.inner) {
-            inline .ext, .wlr => |source| for (mime_types) |mime_type| source.offer(mime_type),
+            inline .ext, .wlr => |source| for (mime_types) |mime_type| source.offer(@ptrCast(mime_type)),
             .portal => {},
         }
     }
