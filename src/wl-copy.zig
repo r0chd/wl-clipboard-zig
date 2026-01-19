@@ -72,11 +72,11 @@ const Cli = struct {
 
     const Self = @This();
 
-    fn init(alloc: mem.Allocator) !Self {
+    fn init(gpa: mem.Allocator) !Self {
         var self = Cli{};
 
         var list: std.ArrayList(u8) = .empty;
-        defer list.deinit(alloc);
+        defer list.deinit(gpa);
 
         var args = process.args();
         var index: u8 = 0;
@@ -160,13 +160,13 @@ const Cli = struct {
                     },
                 }
             } else {
-                try list.appendSlice(alloc, arg);
-                try list.append(alloc, 32);
+                try list.appendSlice(gpa, arg);
+                try list.append(gpa, 32);
             }
         }
 
         if (list.items.len > 0) {
-            self.data = try list.toOwnedSlice(alloc);
+            self.data = try list.toOwnedSlice(gpa);
         }
 
         if (self.backend == null) {
@@ -178,9 +178,9 @@ const Cli = struct {
         return self;
     }
 
-    fn deinit(self: Self, alloc: mem.Allocator) void {
+    fn deinit(self: Self, gpa: mem.Allocator) void {
         if (self.data) |data| {
-            alloc.free(data);
+            gpa.free(data);
         }
     }
 };
@@ -245,7 +245,10 @@ const help_message =
 ;
 
 pub fn main() !void {
-    const alloc = std.heap.c_allocator;
+    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer arena.deinit();
+
+    const alloc = arena.allocator();
 
     const cli = try Cli.init(alloc);
     verbose_enabled = cli.verbose;

@@ -1,8 +1,8 @@
 const wl = @import("wayland").client.wl;
+const zmime = @import("zmime");
 const std = @import("std");
 const mem = std.mem;
 const posix = std.posix;
-const ffi = @cImport(@cInclude("tree_magic_mini.h"));
 const fs = std.fs;
 const mimeTypeIsText = @import("MimeType.zig").mimeTypeIsText;
 const MimeType = @import("MimeType.zig");
@@ -104,8 +104,8 @@ pub const WlClipboard = struct {
         self.primary_data_source.deinit();
         self.device.deinit();
         self.compositor.destroy();
-        self.globals.deinit(gpa);
         self.seat.deinit();
+        self.globals.deinit(gpa);
         self.display.disconnect();
         self.contexts.deinit(gpa);
     }
@@ -147,9 +147,9 @@ pub const WlClipboard = struct {
         const mime = blk: {
             if (opts.mime_type) |mime_opt| {
                 break :blk mime_opt;
-            } else if (ffi.tree_magic_mini_from_fd(tmpfile.f.handle)) |mime| {
-                break :blk std.mem.span(mime);
-            } else {
+            } else if (zmime.detectFileInfo(tmpfile.abs_path)) |file_info| {
+                break :blk zmime.mimeToString(file_info.mime);
+            } else |_| {
                 break :blk "text/plain;charset=utf-8";
             }
         };
@@ -160,9 +160,9 @@ pub const WlClipboard = struct {
         switch (opts.clipboard) {
             .primary => {
                 if (mimeTypeIsText(mime)) {
-                    self.primary_data_source.set_mime_types(&[_][:0]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
+                    self.primary_data_source.set_mime_types(&[_][]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
                 } else {
-                    self.primary_data_source.set_mime_types(&[_][:0]const u8{mime});
+                    self.primary_data_source.set_mime_types(&[_][]const u8{mime});
                 }
 
                 self.primary_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);
@@ -170,9 +170,9 @@ pub const WlClipboard = struct {
             },
             .regular => {
                 if (mimeTypeIsText(mime)) {
-                    self.regular_data_source.set_mime_types(&[_][:0]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
+                    self.regular_data_source.set_mime_types(&[_][]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
                 } else {
-                    self.regular_data_source.set_mime_types(&[_][:0]const u8{mime});
+                    self.regular_data_source.set_mime_types(&[_][]const u8{mime});
                 }
 
                 self.regular_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);
@@ -180,11 +180,11 @@ pub const WlClipboard = struct {
             },
             .both => {
                 if (mimeTypeIsText(mime)) {
-                    self.regular_data_source.set_mime_types(&[_][:0]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
-                    self.primary_data_source.set_mime_types(&[_][:0]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
+                    self.regular_data_source.set_mime_types(&[_][]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
+                    self.primary_data_source.set_mime_types(&[_][]const u8{ "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING", "UTF8_STRING" });
                 } else {
-                    self.regular_data_source.set_mime_types(&[_][:0]const u8{mime});
-                    self.primary_data_source.set_mime_types(&[_][:0]const u8{mime});
+                    self.regular_data_source.set_mime_types(&[_][]const u8{mime});
+                    self.primary_data_source.set_mime_types(&[_][]const u8{mime});
                 }
 
                 self.regular_data_source.setListener(*Contexts.CopyContext, dataControlSourceListener, &self.contexts.copy);

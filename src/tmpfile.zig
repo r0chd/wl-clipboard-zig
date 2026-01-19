@@ -5,16 +5,16 @@ const random_bytes_count = 12;
 const random_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
 
 /// return the sys temp dir as string. The return string is owned by user
-pub fn getSysTmpDir(alloc: mem.Allocator) ![]const u8 {
+pub fn getSysTmpDir(gpa: mem.Allocator) ![]const u8 {
     // cpp17's temp_directory_path gives good reference
     // https://en.cppreference.com/w/cpp/filesystem/temp_directory_path
     // POSIX standard, https://en.wikipedia.org/wiki/TMPDIR
-    return std.process.getEnvVarOwned(alloc, "TMPDIR") catch {
-        return std.process.getEnvVarOwned(alloc, "TMP") catch {
-            return std.process.getEnvVarOwned(alloc, "TEMP") catch {
-                return std.process.getEnvVarOwned(alloc, "TEMPDIR") catch {
+    return std.process.getEnvVarOwned(gpa, "TMPDIR") catch {
+        return std.process.getEnvVarOwned(gpa, "TMP") catch {
+            return std.process.getEnvVarOwned(gpa, "TEMP") catch {
+                return std.process.getEnvVarOwned(gpa, "TEMPDIR") catch {
                     std.log.debug("tried env TMPDIR/TMP/TEMP/TEMPDIR but not found, fallback to /tmp, caution it may not work!\n", .{});
-                    return try alloc.dupe(u8, "/tmp");
+                    return try gpa.dupe(u8, "/tmp");
                 };
             };
         };
@@ -35,16 +35,16 @@ pub const TmpFile = struct {
     sub_path: []const u8,
     f: std.fs.File,
 
-    pub fn deinit(self: *TmpFile, alloc: mem.Allocator) void {
+    pub fn deinit(self: *TmpFile, gpa: mem.Allocator) void {
         self.f.close();
         std.fs.deleteFileAbsolute(self.abs_path) catch |err| std.log.warn("Failed to delete tmpfile {s}: {}\n", .{ self.abs_path, err });
-        alloc.free(self.abs_path);
+        gpa.free(self.abs_path);
     }
 
     /// return a TmpFile created in sys temp dir.
-    pub fn init(alloc: mem.Allocator, args: TmpFileArgs) !TmpFile {
-        const sys_tmp_dir_path = try getSysTmpDir(alloc);
-        defer alloc.free(sys_tmp_dir_path);
+    pub fn init(gpa: mem.Allocator, args: TmpFileArgs) !TmpFile {
+        const sys_tmp_dir_path = try getSysTmpDir(gpa);
+        defer gpa.free(sys_tmp_dir_path);
         var sys_tmp_dir = try std.fs.openDirAbsolute(sys_tmp_dir_path, .{});
 
         var random_bytes: [random_bytes_count]u8 = undefined;
@@ -54,16 +54,16 @@ pub const TmpFile = struct {
 
         const abs_path = brk: {
             var path_buf: std.ArrayList(u8) = .empty;
-            defer path_buf.deinit(alloc);
+            defer path_buf.deinit(gpa);
 
-            try path_buf.writer(alloc).print("{s}{c}{s}_{s}", .{
+            try path_buf.writer(gpa).print("{s}{c}{s}_{s}", .{
                 sys_tmp_dir_path,
                 std.fs.path.sep_posix,
                 "wl_copy",
                 random_path,
             });
 
-            break :brk try path_buf.toOwnedSliceSentinel(alloc, 0);
+            break :brk try path_buf.toOwnedSliceSentinel(gpa, 0);
         };
         const sub_path = abs_path[sys_tmp_dir_path.len + 1 ..]; // +1 for sep
         const dir_path = abs_path[0..sys_tmp_dir_path.len];

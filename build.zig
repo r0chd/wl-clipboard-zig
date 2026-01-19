@@ -30,7 +30,8 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
-    mod.linkSystemLibrary("tree_magic_mini", .{});
+    const zmime = b.dependency("zmime", .{}).module("zmime");
+    mod.addImport("zmime", zmime);
     mod.addImport("tmpfile", tmpfile);
     mod.addImport("mime", mime.module("mime"));
     mod.addImport("wayland", wayland);

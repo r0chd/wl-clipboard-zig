@@ -63,7 +63,7 @@ const Cli = struct {
 
     const Self = @This();
 
-    fn init(alloc: mem.Allocator) !Self {
+    fn init(gpa: mem.Allocator) !Self {
         var self = Cli{};
 
         var args = process.args();
@@ -102,10 +102,10 @@ const Cli = struct {
                 .@"--watch", .@"-w" => {
                     var command: std.ArrayList([:0]const u8) = .empty;
                     while (args.next()) |str| {
-                        try command.append(alloc, str);
+                        try command.append(gpa, str);
                     }
 
-                    self.watch = try command.toOwnedSlice(alloc);
+                    self.watch = try command.toOwnedSlice(gpa);
                 },
                 .@"--seat", .@"-s" => {
                     if (args.next()) |flag_arg| {
@@ -209,7 +209,7 @@ const help_message =
     \\
 ;
 
-const CallbackData = struct { command: [][:0]const u8, alloc: mem.Allocator, clipboard: enum { primary, regular } };
+const CallbackData = struct { command: [][:0]const u8, gpa: mem.Allocator, clipboard: enum { primary, regular } };
 
 fn clipboardCallback(event: wlcb.Event, data: *CallbackData) void {
     const pipe = blk: {
@@ -233,7 +233,7 @@ fn clipboardCallback(event: wlcb.Event, data: *CallbackData) void {
         var file = fs.File{ .handle = p };
         var reader = file.reader(&read_buffer);
 
-        var child = process.Child.init(data.command, data.alloc);
+        var child = process.Child.init(data.command, data.gpa);
         child.stdin_behavior = .Pipe;
 
         child.spawn() catch return;
@@ -251,7 +251,10 @@ fn clipboardCallback(event: wlcb.Event, data: *CallbackData) void {
 }
 
 pub fn main() !void {
-    const alloc = std.heap.c_allocator;
+    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer arena.deinit();
+
+    const alloc = arena.allocator();
 
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
@@ -266,14 +269,13 @@ pub fn main() !void {
     if (cli.watch) |command| {
         var callback_data = CallbackData{
             .command = command,
-            .alloc = alloc,
+            .gpa = alloc,
             .clipboard = if (cli.primary) .primary else .regular,
         };
         try wl_clipboard.watch(alloc, *CallbackData, clipboardCallback, &callback_data);
     }
 
     var clipboard_content = try wl_clipboard.paste(alloc, .{ .mime_type = cli.type, .primary = cli.primary });
-    defer clipboard_content.deinit(alloc);
 
     if (cli.list_types) {
         for (clipboard_content.mimeTypes()) |mime_type| {

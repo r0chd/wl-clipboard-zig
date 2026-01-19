@@ -6,12 +6,10 @@
       url = "github:mitchellh/zig-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    tree_magic.url = "github:r0chd/tree_magic";
   };
   outputs =
     {
       self,
-      tree_magic,
       nixpkgs,
       zig,
       ...
@@ -29,7 +27,6 @@
         default = pkgs.mkShell {
           packages = builtins.attrValues {
             inherit (zig.packages.${pkgs.stdenv.hostPlatform.system}) "0.15.2";
-            inherit (tree_magic.packages.${pkgs.stdenv.hostPlatform.system}) tree_magic_mini;
             inherit (pkgs)
               zls
               pkg-config
@@ -47,9 +44,7 @@
       });
 
       packages = forAllSystems (pkgs: {
-        wl-clipboard-zig = pkgs.callPackage ./nix/package.nix {
-          inherit (tree_magic.packages.${pkgs.stdenv.hostPlatform.system}) tree_magic_mini;
-        };
+        wl-clipboard-zig = pkgs.callPackage ./nix/package.nix { };
         default = self.packages.${pkgs.stdenv.hostPlatform.system}.wl-clipboard-zig;
       });
     };

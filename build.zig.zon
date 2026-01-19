@@ -12,6 +12,10 @@
             .url = "https://github.com/andrewrk/mime/archive/refs/tags/4.0.0.tar.gz",
             .hash = "mime-4.0.0-zwmL--0gAACndOVlROQeDnM0chfojNDS8tpohlsBqMNy",
         },
+        .zmime = .{
+            .url = "git+https://github.com/avac74/zmime#5e00cc9cc01b968b9577df3a1cd7e4af440c0e6c",
+            .hash = "zmime-0.1.3-Mse7galzAAAXYDAj4HG02Ej2uGpNHt7ZzAu6_7l2iiwB",
+        },
     },
     .paths = .{
         "build.zig",
